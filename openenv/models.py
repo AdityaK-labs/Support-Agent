@@ -9,9 +9,8 @@ from __future__ import annotations
 
 import enum
 from typing import Any, Dict, List, Optional
-
+from openai import OpenAI
 from pydantic import BaseModel, Field, field_validator
-
 
 # ---------------------------------------------------------------------------
 # Enums for constrained fields

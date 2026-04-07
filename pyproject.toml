@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "customer-support-agent"
+version = "1.0.0"
+description = "OpenEnv customer support agent environment"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi",
+    "uvicorn",
+    "openai",
+    "pydantic",
+    "gradio",
+    "pyyaml",
+    "python-dotenv",
+    "supabase",
+    "transformers>=4.43.0",
+    "torch",
+    "accelerate",
+    "huggingface-hub",
+    "openenv-core"
+]
+
+[tool.setuptools.packages.find]
+include = ["openenv*"]
+
+[project.scripts]
+server = "server.app:start"

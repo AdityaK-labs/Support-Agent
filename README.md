@@ -1,3 +1,11 @@
+---
+title: MetaAI Support Agent
+emoji: 🎧
+colorFrom: blue
+colorTo: purple
+sdk: docker
+pinned: false
+---
 # OpenEnv-Based Autonomous Customer Support Agent
 
 ## Overview and Motivation

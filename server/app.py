@@ -95,6 +95,9 @@ with gr.Blocks(title="OpenEnv Support Agent") as demo:
 demo.queue()
 app = gr.mount_gradio_app(app, demo, path="/")
 
-if __name__ == "__main__":
+def start():
     port = int(os.environ.get("PORT", 7860))
-    uvicorn.run("app:app", host="0.0.0.0", port=port, reload=True)
+    uvicorn.run("server.app:app", host="0.0.0.0", port=port, reload=True)
+
+if __name__ == "__main__":
+    start()
