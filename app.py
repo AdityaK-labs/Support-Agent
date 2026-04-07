@@ -25,15 +25,18 @@ class ActionRequest(BaseModel):
     response: str = None
 
 @app.get("/api/state")
+@app.get("/state")
 def get_state():
     return env.state()
 
 @app.post("/api/reset")
+@app.post("/reset")
 def reset_env(task_name: str = "easy"):
     res = env.reset(task_name=task_name)
     return res
 
 @app.post("/api/step")
+@app.post("/step")
 def step_env(action_req: ActionRequest):
     act = Action(**action_req.model_dump())
     res = env.step(act)
