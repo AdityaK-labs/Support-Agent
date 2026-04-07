@@ -15,6 +15,7 @@ app = FastAPI(title="OpenEnv Support Agent API")
 # Global environment instance for the UI/API
 # In a real deployed multiuser scenario, this would be session-based.
 env = SupportEnv(task_name="easy")
+env.reset()
 
 # --- FastAPI Routes ---
 
@@ -56,7 +57,8 @@ def ui_step(a_type, t_name, resp_text):
         feedback = f"Reward: {res.reward}\nDone: {res.done}\nInfo: {res.info}"
         return feedback, res.observation.model_dump_json(indent=2), "-> " + "\n-> ".join(env.history)
     except Exception as e:
-        return f"Error: {e}", env.get_current_observation().model_dump_json(indent=2), ""
+        obs_json = env.get_current_observation().model_dump_json(indent=2) if env.current_scenario else "{}"
+        return f"Error: {e}", obs_json, ""
 
 with gr.Blocks(title="OpenEnv Support Agent") as demo:
     gr.Markdown("# 🎧 OpenEnv-Based Autonomous Customer Support Agent")

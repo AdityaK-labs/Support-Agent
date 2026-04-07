@@ -14,6 +14,7 @@ class SupportEnv:
         self.history = []
         self.done = False
         self.total_reward = 0.0
+        self.reset(task_name)
         
     def reset(self, task_name: Optional[str] = None) -> ResetResult:
         if task_name:
@@ -89,6 +90,8 @@ class SupportEnv:
         )
         
     def get_current_observation(self) -> Observation:
+        if not self.current_scenario:
+            return Observation(ticket_id="None", issue_type="None", sentiment="None", priority="None", message="No active scenario. Please reset.", history=self.history.copy())
         obs = self.current_scenario.ticket.copy(deep=True)
         obs.history = self.history.copy()
         return obs

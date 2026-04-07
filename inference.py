@@ -1,12 +1,12 @@
 import asyncio
-import os
 import json
+import os
+import re
 import textwrap
 from typing import List, Optional
 
 from dotenv import load_dotenv
-import torch
-from transformers import AutoTokenizer, AutoModelForCausalLM
+from huggingface_hub import AsyncInferenceClient
 
 load_dotenv()
 
@@ -14,7 +14,7 @@ from support_env import SupportEnvWrapper, SupportAction
 
 IMAGE_NAME = os.getenv("IMAGE_NAME")
 API_KEY = os.getenv("HF_TOKEN") or os.getenv("API_KEY")
-MODEL_NAME = os.getenv("MODEL_NAME", "meta-llama/Llama-3.1-8B-Instruct")
+MODEL_NAME = os.getenv("MODEL_NAME", "Qwen/Qwen2.5-72B-Instruct")
 TASK_NAME = os.getenv("SUPPORT_ENV_TASK", "easy")
 BENCHMARK = os.getenv("SUPPORT_ENV_BENCHMARK", "support_env")
 
@@ -28,19 +28,59 @@ MAX_TOTAL_REWARD = MAX_STEPS * _MAX_REWARD_PER_STEP
 
 SYSTEM_PROMPT = textwrap.dedent(
     """
-    You are an autonomous customer support agent.
-    You will receive details about a customer ticket.
-    Your goal is to choose the correct action to resolve the ticket.
-    Available actions: classify, assign, respond, refund, escalate.
-    If assigning or escalating, you must provide a 'team'.
-    If responding or refunding, you must provide a 'response'.
-    
-    You MUST output valid JSON only, matching this schema exactly:
-    {
-      "action_type": "classify" | "assign" | "respond" | "refund" | "escalate",
-      "team": "string (optional)",
-      "response": "string (optional)"
-    }
+    You are an autonomous customer support agent for a large e-commerce and SaaS company.
+    Read the customer ticket carefully and take exactly ONE action to resolve it.
+
+    STANDARD OPERATING PROCEDURE (SOP):
+
+    ACTION DECISION RULES - follow strictly in order:
+
+    1. USE classify
+       - When the issue type is 'unknown' and just needs categorization (simple address changes, account updates).
+       - Do NOT include team or response.
+
+    2. USE assign + correct TEAM
+       - When the ticket requires specialist handling.
+       - Always set 'team' to EXACTLY one from this directory:
+         * logistics_team      -> Lost packages, shipping tracking, delivery disputes
+         * tech_support_team   -> Login issues, password resets, software bugs, API errors, data loss
+         * safety_team         -> Product defects, overheating, recalls, safety hazards
+         * finance_team        -> Invoice errors, billing corrections, tax/payment issues
+         * orders_team         -> Bulk orders, corporate accounts, order modifications
+         * management_team     -> Escalated complaints, refund delays, manager requests
+
+    3. USE escalate + correct TEAM
+       - When the customer is extremely angry, threatening, or explicitly requests a manager.
+       - When a severe safety issue is involved.
+       - Set team to management_team (or safety_team for hazards).
+       - Always include both 'team' and 'response'.
+       - PUNISHMENT: Using escalate when NOT required costs -0.30 score.
+
+    4. USE refund
+       - ONLY when a product was definitively broken on arrival or provably the company's fault.
+       - Always include a 'response' explaining the refund.
+       - PUNISHMENT: Issuing refund when NOT required costs -0.50 score.
+
+    5. USE respond
+       - When the customer needs information: policy, pricing, features, or technical details.
+       - Include a detailed 'response' addressing their specific question with exact details from their message.
+
+    PUNISHMENT SUMMARY:
+    - Unnecessary refund:     -0.50
+    - Unnecessary escalation: -0.30
+    - Wrong team assigned:    -0.15
+    - More than 3 steps:      -0.10 per extra step
+
+    OUTPUT FORMAT - MANDATORY:
+    Respond with ONLY a raw JSON object. No markdown, no explanation, no code fences.
+    Schema:
+    {"action_type": "...", "team": "...", "response": "..."}
+
+    Examples:
+    {"action_type": "classify"}
+    {"action_type": "assign", "team": "tech_support_team"}
+    {"action_type": "escalate", "team": "management_team", "response": "I sincerely apologize for the experience. I am escalating order #12345 to our management team immediately."}
+    {"action_type": "respond", "response": "Our API rate limits reset hourly. The 429 error means you have exceeded the limit for that hour. Please wait 60 minutes or contact us to discuss a higher plan."}
     """
 ).strip()
 
@@ -113,47 +153,45 @@ def fallback_policy(state: dict) -> dict:
         "response": "Thank you for contacting support."
     }
 
-def call_local_model(state: dict, model, tokenizer, user_prompt: str) -> dict:
+async def call_api_model(state: dict, client: AsyncInferenceClient, user_prompt: str) -> dict:
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": user_prompt},
     ]
-    inputs = tokenizer.apply_chat_template(
-        messages,
-        add_generation_prompt=True,
-        tokenize=True,
-        return_dict=True,
-        return_tensors="pt"
-    ).to(model.device)
-
-    outputs = model.generate(**inputs, max_new_tokens=MAX_TOKENS, temperature=TEMPERATURE, do_sample=True)
-    text = tokenizer.decode(outputs[0][inputs["input_ids"].shape[-1]:], skip_special_tokens=True)
     
-    text = text.strip()
-    if text.startswith("```json"):
-        text = text[7:]
-    if text.startswith("```"):
-        text = text[3:]
-    if text.endswith("```"):
-        text = text[:-3]
-    return json.loads(text.strip())
+    response = await client.chat_completion(
+        messages=messages,
+        max_tokens=MAX_TOKENS,
+        temperature=TEMPERATURE,
+    )
+    
+    text = response.choices[0].message.content.strip()
+    
+    # Robust Regex Extraction to ignore markdown/chatty text padding
+    json_match = re.search(r"(\{.*\})", text, re.DOTALL)
+    if json_match:
+        clean_json = json_match.group(1)
+        try:
+            return json.loads(clean_json)
+        except json.JSONDecodeError as decode_exc:
+            raise ValueError(f"JSON decode failed. Response: {text}") from decode_exc
+    else:
+        raise ValueError(f"No JSON object detected in response. Raw response: {text}")
 
-def get_action(state: dict, model, tokenizer, user_prompt: str) -> SupportAction:
+async def get_action(state: dict, client: AsyncInferenceClient, user_prompt: str) -> SupportAction:
     try:
-        data = call_local_model(state, model, tokenizer, user_prompt)
+        data = await call_api_model(state, client, user_prompt)
         return SupportAction(**data)
     except Exception as exc:
-        print(f"[DEBUG] Model request failed: {exc}", flush=True)
+        print(f"\n[DEBUG] ❌ Inference or Parse failed: {type(exc).__name__}: {exc}\n", flush=True)
         fb_dict = fallback_policy(state)
         return SupportAction(**fb_dict)
 
 async def main() -> None:
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
-    model = AutoModelForCausalLM.from_pretrained(
-        MODEL_NAME,
-        device_map="auto",
-        torch_dtype=torch.bfloat16
-    )
+    if not API_KEY:
+        print("[WARNING] No HF_TOKEN found! Remote inference will likely fail or hit strict rate limits.")
+        
+    client = AsyncInferenceClient(model=MODEL_NAME, token=API_KEY)
 
     env = await SupportEnvWrapper.from_docker_image(IMAGE_NAME)
     env.env.task_name = TASK_NAME
@@ -179,7 +217,7 @@ async def main() -> None:
                 "message": obs.message,
                 "sentiment": obs.sentiment
             }
-            action = get_action(state_dict, model, tokenizer, user_prompt)
+            action = await get_action(state_dict, client, user_prompt)
             action_str = json.dumps(action.model_dump())
 
             # environment step
