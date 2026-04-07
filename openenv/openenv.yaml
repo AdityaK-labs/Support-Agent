@@ -1,0 +1,94 @@
+environment:
+  name: customer-support-agent
+  version: "1.0.0"
+  description: >
+    OpenEnv-compliant autonomous customer support environment.
+    An AI agent processes realistic BPO/customer-support tickets, deciding
+    actions such as classify, assign, respond, refund, or escalate.
+    The environment evaluates each action via a deterministic reward function
+    with partial-credit scoring in [0.0, 1.0].
+  tags:
+    - openenv
+    - customer-support
+    - reinforcement-learning
+    - bpo
+
+tasks:
+  - name: easy
+    description: "Classify the customer ticket into the correct issue type."
+    difficulty: easy
+    max_steps: 3
+    num_scenarios: 5
+
+  - name: medium
+    description: "Classify the ticket AND assign it to the correct team."
+    difficulty: medium
+    max_steps: 4
+    num_scenarios: 5
+
+  - name: hard
+    description: >
+      Full ticket resolution: correct classification, team assignment,
+      appropriate action (respond/refund/escalate), and quality response.
+    difficulty: hard
+    max_steps: 5
+    num_scenarios: 5
+
+observation_space:
+  type: object
+  fields:
+    ticket_id:
+      type: string
+      description: "Unique ticket identifier"
+    issue_type:
+      type: string
+      description: "Category of the customer issue"
+      enum: [shipping, billing, product_defect, returns, technical, cancellation, safety, complaint]
+    sentiment:
+      type: string
+      description: "Detected customer sentiment"
+      enum: [positive, neutral, negative, angry]
+    priority:
+      type: string
+      description: "Ticket urgency level"
+      enum: [low, medium, high, critical]
+    message:
+      type: string
+      description: "The customer's original message text"
+    history:
+      type: array
+      items:
+        type: string
+      description: "List of previous interaction messages in the episode"
+
+action_space:
+  type: object
+  fields:
+    action_type:
+      type: string
+      description: "Primary action to execute"
+      enum: [classify, assign, respond, refund, escalate]
+    team:
+      type: string
+      nullable: true
+      description: "Target team (used with assign/escalate actions)"
+      enum: [logistics_team, finance_team, quality_team, orders_team, tech_support_team, management_team, safety_team, general_support_team]
+    response:
+      type: string
+      nullable: true
+      description: "Customer-facing response message (used with respond/refund/escalate)"
+
+reward:
+  range: [0.0, 1.0]
+  components:
+    classification: 0.2
+    team_assignment: 0.3
+    action_correctness: 0.3
+    response_quality: 0.2
+  penalties:
+    wrong_refund: -0.5
+    wrong_escalation: -0.3
+    excessive_steps: -0.1
+  description: >
+    Score is the sum of component credits minus penalties, clipped to [0, 1].
+    Partial credit is awarded for each correct component independently.
