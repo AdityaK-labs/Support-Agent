@@ -119,7 +119,7 @@ class GraderEngine:
         # ------------------------------------------------------------------ #
         # Final score: clamp to [0.0, 1.0]
         # ------------------------------------------------------------------ #
-        final_score = max(0.0, min(1.0, proportional_score - punishment_total))
+        final_score = max(0.002, min(0.998, proportional_score - punishment_total))
         feedback_parts.append(f"[FINAL] Score: {final_score:.3f}")
 
         return Reward(score=final_score, feedback=" | ".join(feedback_parts))
