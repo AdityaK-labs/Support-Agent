@@ -1,22 +1,40 @@
+import asyncio
+import json
 import os
-import uvicorn
+import re
+import textwrap
+from typing import List, Optional
+
 import gradio as gr
-from fastapi import FastAPI
-from pydantic import BaseModel
+import uvicorn
 from dotenv import load_dotenv
+from fastapi import FastAPI
+from openai import AsyncOpenAI
+from pydantic import BaseModel
 
 load_dotenv()
 
 from openenv.env import SupportEnv
 from openenv.models import Action
 
-app = FastAPI(title="OpenEnv Support Agent API")
+# ---------------------------------------------------------------------------
+# Config
+# ---------------------------------------------------------------------------
 
-# Global environment instance for the UI/API
+API_BASE_URL = os.getenv("API_BASE_URL")
+API_KEY      = os.getenv("HF_TOKEN") or os.getenv("API_KEY")
+MODEL_NAME   = os.getenv("MODEL_NAME", "Qwen/Qwen2.5-72B-Instruct")
+
+TEMPERATURE = 0.2
+MAX_TOKENS  = 500
+
+# ---------------------------------------------------------------------------
+# FastAPI app + environment
+# ---------------------------------------------------------------------------
+
+app = FastAPI(title="OpenEnv Support Agent API")
 env = SupportEnv(task_name="easy")
 env.reset()
-
-# --- FastAPI Routes ---
 
 class ActionRequest(BaseModel):
     action_type: str
@@ -31,71 +49,295 @@ def get_state():
 @app.post("/api/reset")
 @app.post("/reset")
 def reset_env(task_name: str = "easy"):
-    res = env.reset(task_name=task_name)
-    return res
+    return env.reset(task_name=task_name)
 
 @app.post("/api/step")
 @app.post("/step")
 def step_env(action_req: ActionRequest):
     act = Action(**action_req.model_dump())
-    res = env.step(act)
-    return res
+    return env.step(act)
 
-# --- Gradio UI ---
+# ---------------------------------------------------------------------------
+# Agent LLM logic (shared with inference.py)
+# ---------------------------------------------------------------------------
 
-def ui_reset(task_choice):
-    mapping = {"Easy (Classification)": "easy", "Medium (Assignment)": "medium", "Hard (Resolution)": "hard"}
-    task_name = mapping.get(task_choice, "easy")
+SYSTEM_PROMPT = textwrap.dedent("""
+    You are an autonomous customer support agent for a large e-commerce and SaaS company.
+    Read the customer ticket carefully and take exactly ONE action to resolve it.
+
+    ACTION DECISION RULES:
+    1. classify  — ticket just needs categorisation (unknown issue type, no team needed)
+    2. assign    — needs specialist: logistics_team, tech_support_team, safety_team,
+                   finance_team, orders_team, management_team
+    3. escalate  — extremely angry customer, safety hazard, or explicit manager request.
+                   Always include team + response. PENALTY -0.30 if unnecessary.
+    4. refund    — product broken on arrival / provably company fault.
+                   Always include response. PENALTY -0.50 if unnecessary.
+    5. respond   — customer needs information; write a detailed, specific response.
+
+    OUTPUT FORMAT — MANDATORY:
+    Raw JSON only. No markdown, no explanation.
+    {"action_type": "...", "team": "...", "response": "..."}
+""").strip()
+
+
+def _build_prompt(obs, history: List[str]) -> str:
+    ctx = {
+        "ticket_id":  obs.ticket_id,
+        "issue_type": obs.issue_type,
+        "sentiment":  obs.sentiment,
+        "priority":   obs.priority,
+        "message":    obs.message,
+    }
+    hist = "\n".join(history[-4:]) if history else "None"
+    return textwrap.dedent(f"""
+        Ticket: {json.dumps(ctx, indent=2)}
+        History:
+        {hist}
+        Decide your action and return JSON.
+    """).strip()
+
+
+async def _call_llm(obs, history: List[str]) -> dict:
+    if not API_BASE_URL or not API_KEY:
+        raise RuntimeError("API_BASE_URL / HF_TOKEN not configured.")
+    client = AsyncOpenAI(base_url=API_BASE_URL, api_key=API_KEY)
+    prompt = _build_prompt(obs, history)
+    resp = await client.chat.completions.create(
+        model=MODEL_NAME,
+        messages=[
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user",   "content": prompt},
+        ],
+        max_tokens=MAX_TOKENS,
+        temperature=TEMPERATURE,
+    )
+    text = resp.choices[0].message.content.strip()
+    match = re.search(r"(\{.*\})", text, re.DOTALL)
+    if not match:
+        raise ValueError(f"No JSON in LLM response: {text}")
+    return json.loads(match.group(1))
+
+# ---------------------------------------------------------------------------
+# Gradio UI helpers
+# ---------------------------------------------------------------------------
+
+TASK_MAP = {
+    "Easy (Classification)":  "easy",
+    "Medium (Assignment)":    "medium",
+    "Hard (Full Resolution)": "hard",
+}
+
+_agent_history: List[str] = []   # per-episode history for the agent
+
+
+def ui_reset(task_choice: str):
+    global _agent_history
+    _agent_history = []
+    task_name = TASK_MAP.get(task_choice, "easy")
     res = env.reset(task_name)
-    return f"Environment reset to {task_name}.", res.observation.model_dump_json(indent=2)
+    obs_json = res.observation.model_dump_json(indent=2)
+    return (
+        obs_json,           # observation box
+        "",                 # agent message box
+        "",                 # action info box
+        "",                 # reward box
+        "",                 # history box
+    )
 
-def ui_step(a_type, t_name, resp_text):
+
+async def ui_auto_step():
+    """Let the LLM agent decide and execute the next action."""
+    global _agent_history
+
     if env.done:
-        return "Episode is already done! Please reset.", env.state().model_dump_json(indent=2), ""
+        return (
+            env.get_current_observation().model_dump_json(indent=2),
+            "",
+            "Episode finished — please reset.",
+            "",
+            _fmt_history(),
+        )
+
+    obs = env.get_current_observation()
 
     try:
-        act = Action(action_type=a_type, team=t_name if t_name else None, response=resp_text if resp_text else None)
-        res = env.step(act)
-        feedback = f"Reward: {res.reward}\nDone: {res.done}\nInfo: {res.info}"
-        return feedback, res.observation.model_dump_json(indent=2), "-> " + "\n-> ".join(env.history)
-    except Exception as e:
-        obs_json = env.get_current_observation().model_dump_json(indent=2) if env.current_scenario else "{}"
-        return f"Error: {e}", obs_json, ""
+        action_data = await _call_llm(obs, _agent_history)
+        action = Action(**action_data)
+        error_msg = None
+    except Exception as exc:
+        error_msg = str(exc)
+        # Minimal safe fallback so the UI doesn't freeze
+        action = Action(action_type="classify")
+        action_data = {"action_type": "classify"}
 
-with gr.Blocks(title="OpenEnv Support Agent") as demo:
-    gr.Markdown("# OpenEnv-Based Autonomous Customer Support Agent")
-    gr.Markdown("This interface lets you manually step the environment or view the state. For agent evaluation, use `inference.py`.")
+    result   = env.step(action)
+    reward   = result.reward
+    done     = result.done
 
-    with gr.Row():
-        task_dropdown = gr.Dropdown(
-            choices=["Easy (Classification)", "Medium (Assignment)", "Hard (Resolution)"],
-            value="Easy (Classification)", label="Select Task Level"
+    # Build human-readable action summary
+    act_summary_parts = [f"Action:  {action.action_type}"]
+    if action.team:
+        act_summary_parts.append(f"Team:    {action.team}")
+    if error_msg:
+        act_summary_parts.append(f"Error:   {error_msg}")
+    act_summary = "\n".join(act_summary_parts)
+
+    agent_message = action.response or "(no message — action was classify/assign)"
+
+    reward_text = (
+        f"Score:    {reward:.3f}\n"
+        f"Done:     {done}\n"
+        f"Feedback: {result.info.get('feedback', '')}"
+    )
+
+    _agent_history = env.history.copy()
+
+    return (
+        result.observation.model_dump_json(indent=2),
+        agent_message,
+        act_summary,
+        reward_text,
+        _fmt_history(),
+    )
+
+
+def ui_manual_step(a_type: str, t_name: str, resp_text: str):
+    """Manual step — user picks action, team, response."""
+    global _agent_history
+
+    if env.done:
+        return (
+            env.get_current_observation().model_dump_json(indent=2),
+            "",
+            "Episode finished — please reset.",
+            "",
+            _fmt_history(),
         )
-        reset_btn = gr.Button("Reset Environment")
 
+    try:
+        action = Action(
+            action_type=a_type,
+            team=t_name or None,
+            response=resp_text or None,
+        )
+        result  = env.step(action)
+        reward  = result.reward
+        done    = result.done
+
+        act_summary = f"Action:  {a_type}"
+        if t_name:
+            act_summary += f"\nTeam:    {t_name}"
+
+        agent_message = resp_text or "(no response text provided)"
+
+        reward_text = (
+            f"Score:    {reward:.3f}\n"
+            f"Done:     {done}\n"
+            f"Feedback: {result.info.get('feedback', '')}"
+        )
+
+        _agent_history = env.history.copy()
+
+        return (
+            result.observation.model_dump_json(indent=2),
+            agent_message,
+            act_summary,
+            reward_text,
+            _fmt_history(),
+        )
+
+    except Exception as exc:
+        return (
+            env.get_current_observation().model_dump_json(indent=2),
+            "",
+            f"Error: {exc}",
+            "",
+            _fmt_history(),
+        )
+
+
+def _fmt_history() -> str:
+    return "\n".join(f"  {h}" for h in env.history) if env.history else "(empty)"
+
+# ---------------------------------------------------------------------------
+# Gradio layout
+# ---------------------------------------------------------------------------
+
+with gr.Blocks(title="OpenEnv Support Agent", theme=gr.themes.Soft()) as demo:
+
+    gr.Markdown("# OpenEnv — Autonomous Customer Support Agent")
+    gr.Markdown(
+        "Select a task level and hit **Reset**. "
+        "Use **Run Agent Step** to let the LLM decide automatically, "
+        "or expand **Manual Step** to override."
+    )
+
+    # ── Top bar ──────────────────────────────────────────────────────────────
     with gr.Row():
-        with gr.Column():
-            gr.Markdown("### Observation (Current State)")
-            obs_box = gr.Code(language="json", label="Observation JSON")
-            history_box = gr.Textbox(label="Action History", lines=5, interactive=False)
+        task_dd  = gr.Dropdown(
+            choices=list(TASK_MAP.keys()),
+            value="Easy (Classification)",
+            label="Task Level",
+            scale=2,
+        )
+        reset_btn = gr.Button("Reset Environment", variant="secondary", scale=1)
 
-        with gr.Column():
-            gr.Markdown("### Take Action")
-            act_type = gr.Dropdown(choices=["classify", "assign", "respond", "refund", "escalate"], value="classify", label="Action Type")
-            act_team = gr.Textbox(label="Team (optional)")
-            act_resp = gr.Textbox(label="Response text (optional)")
-            step_btn = gr.Button("Step Environment", variant="primary")
-            feedback_box = gr.Textbox(label="Reward / Step Info", interactive=False)
+    # ── Main columns ─────────────────────────────────────────────────────────
+    with gr.Row():
 
-    reset_btn.click(ui_reset, inputs=[task_dropdown], outputs=[feedback_box, obs_box])
-    step_btn.click(ui_step, inputs=[act_type, act_team, act_resp], outputs=[feedback_box, obs_box, history_box])
+        # Left — observation + history
+        with gr.Column(scale=1):
+            gr.Markdown("### Current Observation")
+            obs_box = gr.Code(language="json", label="Ticket JSON", lines=14)
+
+            gr.Markdown("### Action History")
+            hist_box = gr.Textbox(label="", lines=6, interactive=False)
+
+        # Right — agent output
+        with gr.Column(scale=1):
+            gr.Markdown("### Agent")
+
+            auto_btn = gr.Button("Run Agent Step", variant="primary", size="lg")
+
+            msg_box = gr.Textbox(
+                label="Agent Message / Response",
+                lines=5,
+                interactive=False,
+                placeholder="The agent's reply to the customer will appear here...",
+            )
+            act_box = gr.Textbox(
+                label="Action Taken",
+                lines=3,
+                interactive=False,
+            )
+            reward_box = gr.Textbox(
+                label="Score & Feedback",
+                lines=4,
+                interactive=False,
+            )
+
+            # ── Manual override (collapsed) ──────────────────────────────────
+            with gr.Accordion("Manual Step (override)", open=False):
+                act_type = gr.Dropdown(
+                    choices=["classify", "assign", "respond", "refund", "escalate"],
+                    value="classify",
+                    label="Action Type",
+                )
+                act_team = gr.Textbox(label="Team (optional)")
+                act_resp = gr.Textbox(label="Response text (optional)", lines=3)
+                manual_btn = gr.Button("Step with Manual Action")
+
+    # ── Wire up events ────────────────────────────────────────────────────────
+    _outputs = [obs_box, msg_box, act_box, reward_box, hist_box]
+
+    reset_btn.click(ui_reset,       inputs=[task_dd],                              outputs=_outputs)
+    auto_btn.click( ui_auto_step,   inputs=[],                                     outputs=_outputs)
+    manual_btn.click(ui_manual_step, inputs=[act_type, act_team, act_resp],        outputs=_outputs)
 
 demo.queue()
 app = gr.mount_gradio_app(app, demo, path="/")
 
-def main():
+if __name__ == "__main__":
     port = int(os.environ.get("PORT", 7860))
     uvicorn.run("server.app:app", host="0.0.0.0", port=port, reload=True)
-
-if __name__ == "__main__":
-    main()
