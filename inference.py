@@ -197,6 +197,61 @@ async def get_action(state: dict, client: AsyncOpenAI, user_prompt: str) -> Supp
     # with a visible error, preventing silent fallback-only episodes.
     return SupportAction(**data)
 
+async def run_episode(task_name: str, client: AsyncOpenAI) -> None:
+    """Run one full episode for the given task and emit START/STEP/END logs."""
+    env = await SupportEnvWrapper.from_docker_image(IMAGE_NAME)
+    env.env.task_name = task_name
+
+    history: List[str] = []
+    rewards: List[float] = []
+    steps_taken = 0
+    score = 0.0
+    success = False
+
+    log_start(task=task_name, env=BENCHMARK, model=MODEL_NAME)
+
+    try:
+        result = await env.reset()
+        obs = result.observation
+
+        for step in range(1, MAX_STEPS + 1):
+            if result.done:
+                break
+
+            user_prompt = build_user_prompt(step, obs, history)
+            state_dict = {
+                "message": obs.message,
+                "sentiment": obs.sentiment,
+            }
+            action = await get_action(state_dict, client, user_prompt)
+            action_str = json.dumps(action.model_dump())
+
+            result = await env.step(action)
+            obs = result.observation
+            reward = result.reward or 0.0
+            done = result.done
+
+            rewards.append(reward)
+            steps_taken = step
+
+            log_step(step=step, action=action_str, reward=reward, done=done, error=None)
+            history.append(f"Step {step}: {action_str} -> reward {reward:+.2f}")
+
+            if done:
+                break
+
+        score = sum(rewards) / float(len(rewards)) if rewards else 0.0
+        score = min(max(score, 0.002), 0.998)
+        success = score >= SUCCESS_SCORE_THRESHOLD
+
+    finally:
+        try:
+            await env.close()
+        except Exception as exc:
+            print(f"[DEBUG] env.close() error: {exc}", flush=True)
+        log_end(success=success, steps=steps_taken, score=score, rewards=rewards)
+
+
 async def main() -> None:
     if not API_BASE_URL:
         raise RuntimeError("[FATAL] API_BASE_URL is not set. The LLM proxy URL must be provided via environment variable.")
@@ -206,59 +261,16 @@ async def main() -> None:
     print(f"[INFO] Using API_BASE_URL={API_BASE_URL} MODEL_NAME={MODEL_NAME}", flush=True)
     client = AsyncOpenAI(base_url=API_BASE_URL, api_key=API_KEY)
 
-    env = await SupportEnvWrapper.from_docker_image(IMAGE_NAME)
-    env.env.task_name = TASK_NAME
+    # If a specific task is requested run only that one, otherwise run all three
+    # so the validator can enumerate tasks and verify each grader.
+    if TASK_NAME in ("easy", "medium", "hard"):
+        tasks_to_run = [TASK_NAME]
+    else:
+        tasks_to_run = ["easy", "medium", "hard"]
 
-    history: List[str] = []
-    rewards: List[float] = []
-    steps_taken = 0
-    score = 0.0
-    success = False
+    for task in tasks_to_run:
+        await run_episode(task, client)
 
-    log_start(task=TASK_NAME, env=BENCHMARK, model=MODEL_NAME)
-
-    try:
-        result = await env.reset()
-        obs = result.observation
-        
-        for step in range(1, MAX_STEPS + 1):
-            if result.done:
-                break
-
-            user_prompt = build_user_prompt(step, obs, history)
-            state_dict = {
-                "message": obs.message,
-                "sentiment": obs.sentiment
-            }
-            action = await get_action(state_dict, client, user_prompt)
-            action_str = json.dumps(action.model_dump())
-
-            # environment step
-            result = await env.step(action)
-            obs = result.observation
-            reward = result.reward or 0.0
-            done = result.done
-            error = None
-
-            rewards.append(reward)
-            steps_taken = step
-
-            log_step(step=step, action=action_str, reward=reward, done=done, error=error)
-            history.append(f"Step {step}: {action_str} -> reward {reward:+.2f}")
-
-            if done:
-                break
-
-        score = sum(rewards) / float(len(rewards)) if rewards else 0.0 
-        score = min(max(score, 0.0), 1.0)
-        success = score >= SUCCESS_SCORE_THRESHOLD
-
-    finally:
-        try:
-            await env.close()
-        except Exception as e:
-            print(f"[DEBUG] env.close() error: {e}", flush=True)
-        log_end(success=success, steps=steps_taken, score=score, rewards=rewards)
 
 if __name__ == "__main__":
     asyncio.run(main())
