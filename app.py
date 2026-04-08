@@ -153,7 +153,40 @@ SYSTEM_PROMPT = textwrap.dedent("""
 """).strip()
 
 
-def _build_prompt(obs, history: List[str]) -> str:
+TASK_INSTRUCTIONS = {
+    "easy": (
+        "TASK LEVEL: EASY\n"
+        "YOUR ONLY VALID ACTION: classify\n"
+        "DO NOT assign, respond, refund, or escalate.\n"
+        "Output exactly: {\"action_type\": \"classify\"}"
+    ),
+    "medium": (
+        "TASK LEVEL: MEDIUM\n"
+        "YOUR ONLY VALID ACTION: assign + correct team\n"
+        "DO NOT classify, respond, refund, or escalate — even if the customer is angry.\n"
+        "Pick the right team:\n"
+        "  shipping/delivery → logistics_team\n"
+        "  login/password/bug/data/api → tech_support_team\n"
+        "  overheating/safety/defect → safety_team\n"
+        "  invoice/billing/payment → finance_team\n"
+        "  bulk/corporate orders → orders_team\n"
+        "  manager request/refund delay → management_team\n"
+        "Output: {\"action_type\": \"assign\", \"team\": \"<team_name>\"}"
+    ),
+    "hard": (
+        "TASK LEVEL: HARD\n"
+        "Choose the ONE correct action:\n"
+        "  escalate — customer demands manager, extreme anger, OR data loss/safety emergency. "
+        "Include team + response.\n"
+        "  refund   — product provably wrong/broken and company is at fault. Include response.\n"
+        "  respond  — customer needs information (pricing, features, policy, technical details). "
+        "Write a detailed specific response.\n"
+        "DO NOT classify or assign on hard tasks."
+    ),
+}
+
+
+def _build_prompt(obs, history: List[str], task_name: str = "easy") -> str:
     ctx = {
         "ticket_id":  obs.ticket_id,
         "issue_type": obs.issue_type,
@@ -162,19 +195,22 @@ def _build_prompt(obs, history: List[str]) -> str:
         "message":    obs.message,
     }
     hist = "\n".join(history[-4:]) if history else "None"
+    instruction = TASK_INSTRUCTIONS.get(task_name, TASK_INSTRUCTIONS["easy"])
     return textwrap.dedent(f"""
+        {instruction}
+
         Ticket: {json.dumps(ctx, indent=2)}
         History:
         {hist}
-        Decide your action and return JSON.
+        Respond with JSON only.
     """).strip()
 
 
-async def _call_llm(obs, history: List[str]) -> dict:
+async def _call_llm(obs, history: List[str], task_name: str = "easy") -> dict:
     if not API_BASE_URL or not API_KEY:
         raise RuntimeError("API_BASE_URL / HF_TOKEN not configured.")
     client = AsyncOpenAI(base_url=API_BASE_URL, api_key=API_KEY)
-    prompt = _build_prompt(obs, history)
+    prompt = _build_prompt(obs, history, task_name)
     resp = await client.chat.completions.create(
         model=MODEL_NAME,
         messages=[
@@ -244,7 +280,7 @@ async def ui_auto_step():
         obs = env.get_current_observation()
 
         try:
-            action_data = await _call_llm(obs, _agent_history)
+            action_data = await _call_llm(obs, _agent_history, env.task_name)
             action = Action(**action_data)
             error_msg = None
         except Exception as exc:

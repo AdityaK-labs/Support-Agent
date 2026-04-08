@@ -100,7 +100,41 @@ def log_end(success: bool, steps: int, score: float, rewards: List[float]) -> No
     rewards_str = ",".join(f"{r:.2f}" for r in rewards)
     print(f"[END] success={str(success).lower()} steps={steps} score={score:.3f} rewards={rewards_str}", flush=True)
 
-def build_user_prompt(step: int, obs: any, history: List[str]) -> str:
+TASK_INSTRUCTIONS = {
+    "easy": (
+        "TASK LEVEL: EASY\n"
+        "YOUR ONLY VALID ACTION: classify\n"
+        "DO NOT assign, respond, refund, or escalate.\n"
+        "Just output: {\"action_type\": \"classify\"}"
+    ),
+    "medium": (
+        "TASK LEVEL: MEDIUM\n"
+        "YOUR ONLY VALID ACTION: assign + correct team\n"
+        "DO NOT classify, respond, refund, or escalate — even if the customer is angry.\n"
+        "Pick the right team:\n"
+        "  shipping/delivery → logistics_team\n"
+        "  login/password/bug/data/api → tech_support_team\n"
+        "  overheating/safety/defect → safety_team\n"
+        "  invoice/billing/payment → finance_team\n"
+        "  bulk/corporate orders → orders_team\n"
+        "  manager request/refund delay → management_team\n"
+        "Output: {\"action_type\": \"assign\", \"team\": \"<team_name>\"}"
+    ),
+    "hard": (
+        "TASK LEVEL: HARD\n"
+        "Choose the ONE correct action:\n"
+        "  escalate — customer demands manager, extreme anger, OR data loss/safety emergency\n"
+        "            Always include team + response.\n"
+        "  refund   — product provably wrong/broken and company is at fault\n"
+        "            Always include response.\n"
+        "  respond  — customer needs information (pricing, features, policy, technical details)\n"
+        "            Write a detailed, specific response addressing their exact question.\n"
+        "DO NOT classify or assign on hard tasks."
+    ),
+}
+
+
+def build_user_prompt(step: int, obs: any, history: List[str], task_name: str = "easy") -> str:
     obs_dict = {
         "ticket_id": obs.ticket_id,
         "issue_type": obs.issue_type,
@@ -109,14 +143,17 @@ def build_user_prompt(step: int, obs: any, history: List[str]) -> str:
         "message": obs.message,
     }
     history_block = "\n".join(history[-4:]) if history else "None"
+    task_instruction = TASK_INSTRUCTIONS.get(task_name, TASK_INSTRUCTIONS["easy"])
     return textwrap.dedent(
         f"""
+        {task_instruction}
+
         Step: {step}
-        Ticket Context: {json.dumps(obs_dict, indent=2)}
-        Previous steps history:
+        Ticket: {json.dumps(obs_dict, indent=2)}
+        History:
         {history_block}
-        
-        Send your JSON action.
+
+        Respond with JSON only.
         """
     ).strip()
 
@@ -218,7 +255,7 @@ async def run_episode(task_name: str, client: AsyncOpenAI) -> None:
             if result.done:
                 break
 
-            user_prompt = build_user_prompt(step, obs, history)
+            user_prompt = build_user_prompt(step, obs, history, task_name)
             state_dict = {
                 "message": obs.message,
                 "sentiment": obs.sentiment,
