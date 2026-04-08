@@ -219,7 +219,7 @@ def ui_reset(task_choice: str):
 
 
 async def ui_auto_step():
-    """Let the LLM agent decide and execute the next action."""
+    """Run the full episode: loop until done, showing all steps taken."""
     global _agent_history
 
     if env.done:
@@ -231,42 +231,59 @@ async def ui_auto_step():
             _fmt_history(),
         )
 
-    obs = env.get_current_observation()
+    all_steps = []       # list of per-step summaries
+    all_rewards = []
+    last_message = ""
 
-    try:
-        action_data = await _call_llm(obs, _agent_history)
-        action = Action(**action_data)
-        error_msg = None
-    except Exception as exc:
-        error_msg = str(exc)
-        # Minimal safe fallback so the UI doesn't freeze
-        action = Action(action_type="classify")
-        action_data = {"action_type": "classify"}
+    MAX_UI_STEPS = 5
 
-    result   = env.step(action)
-    reward   = result.reward
-    done     = result.done
+    for step_num in range(1, MAX_UI_STEPS + 1):
+        if env.done:
+            break
 
-    # Build human-readable action summary
-    act_summary_parts = [f"Action:  {action.action_type}"]
-    if action.team:
-        act_summary_parts.append(f"Team:    {action.team}")
-    if error_msg:
-        act_summary_parts.append(f"Error:   {error_msg}")
-    act_summary = "\n".join(act_summary_parts)
+        obs = env.get_current_observation()
 
-    agent_message = action.response or "(no message — action was classify/assign)"
+        try:
+            action_data = await _call_llm(obs, _agent_history)
+            action = Action(**action_data)
+            error_msg = None
+        except Exception as exc:
+            error_msg = str(exc)
+            action = Action(action_type="classify")
 
+        result = env.step(action)
+        reward = result.reward
+        done   = result.done
+
+        _agent_history = env.history.copy()
+        all_rewards.append(reward)
+
+        step_line = f"Step {step_num}: {action.action_type}"
+        if action.team:
+            step_line += f" → {action.team}"
+        step_line += f"  |  score: {reward:.3f}"
+        if error_msg:
+            step_line += f"  [error: {error_msg}]"
+        all_steps.append(step_line)
+
+        if action.response:
+            last_message = action.response
+
+        if done:
+            break
+
+    act_summary = "\n".join(all_steps)
+    avg_score = sum(all_rewards) / len(all_rewards) if all_rewards else 0.0
     reward_text = (
-        f"Score:    {reward:.3f}\n"
-        f"Done:     {done}\n"
-        f"Feedback: {result.info.get('feedback', '')}"
+        f"Steps taken: {len(all_rewards)}\n"
+        f"Rewards:     {', '.join(f'{r:.3f}' for r in all_rewards)}\n"
+        f"Avg score:   {avg_score:.3f}\n"
+        f"Done:        {env.done}"
     )
-
-    _agent_history = env.history.copy()
+    agent_message = last_message or "(no customer-facing message — classify/assign task)"
 
     return (
-        result.observation.model_dump_json(indent=2),
+        env.get_current_observation().model_dump_json(indent=2),
         agent_message,
         act_summary,
         reward_text,
