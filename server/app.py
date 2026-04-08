@@ -58,6 +58,78 @@ def step_env(action_req: ActionRequest):
     return env.step(act)
 
 # ---------------------------------------------------------------------------
+# Required OpenEnv runtime endpoints
+# ---------------------------------------------------------------------------
+
+@app.get("/health")
+def health():
+    return {"status": "healthy"}
+
+@app.get("/metadata")
+def metadata():
+    return {
+        "name": "customer-support-agent",
+        "description": (
+            "OpenEnv-compliant autonomous customer support environment. "
+            "An AI agent processes BPO/customer-support tickets deciding "
+            "classify, assign, respond, refund, or escalate actions."
+        ),
+        "version": "1.0.0",
+        "tasks": ["easy", "medium", "hard"],
+    }
+
+@app.get("/schema")
+def schema():
+    return {
+        "action": {
+            "type": "object",
+            "properties": {
+                "action_type": {"type": "string", "enum": ["classify", "assign", "respond", "refund", "escalate"]},
+                "team":        {"type": "string", "nullable": True},
+                "response":    {"type": "string", "nullable": True},
+            },
+            "required": ["action_type"],
+        },
+        "observation": {
+            "type": "object",
+            "properties": {
+                "ticket_id":  {"type": "string"},
+                "issue_type": {"type": "string"},
+                "sentiment":  {"type": "string"},
+                "priority":   {"type": "string"},
+                "message":    {"type": "string"},
+                "history":    {"type": "array", "items": {"type": "string"}},
+            },
+        },
+        "state": {
+            "type": "object",
+            "properties": {
+                "observation":   {"type": "object"},
+                "step_count":    {"type": "integer"},
+                "done":          {"type": "boolean"},
+                "episode_id":    {"type": "string"},
+                "total_reward":  {"type": "number"},
+                "task_name":     {"type": "string"},
+                "max_steps":     {"type": "integer"},
+            },
+        },
+    }
+
+@app.post("/mcp")
+def mcp(request: dict = None):
+    return {
+        "jsonrpc": "2.0",
+        "result": {
+            "tools": [
+                {"name": "reset", "description": "Reset the environment"},
+                {"name": "step",  "description": "Take a step in the environment"},
+                {"name": "state", "description": "Get current environment state"},
+            ]
+        },
+        "id": None,
+    }
+
+# ---------------------------------------------------------------------------
 # Agent LLM logic (shared with inference.py)
 # ---------------------------------------------------------------------------
 
@@ -338,6 +410,9 @@ with gr.Blocks(title="OpenEnv Support Agent", theme=gr.themes.Soft()) as demo:
 demo.queue()
 app = gr.mount_gradio_app(app, demo, path="/")
 
-if __name__ == "__main__":
+def main():
     port = int(os.environ.get("PORT", 7860))
     uvicorn.run("server.app:app", host="0.0.0.0", port=port, reload=True)
+
+if __name__ == "__main__":
+    main()

@@ -6,7 +6,7 @@ environment:
     An AI agent processes realistic BPO/customer-support tickets, deciding
     actions such as classify, assign, respond, refund, or escalate.
     The environment evaluates each action via a deterministic reward function
-    with partial-credit scoring in [0.0, 1.0].
+    with partial-credit scoring in [0.002, 0.998].
   tags:
     - openenv
     - customer-support
@@ -19,12 +19,14 @@ tasks:
     difficulty: easy
     max_steps: 3
     num_scenarios: 5
+    grader: openenv.graders.grader.GraderEngine
 
   - name: medium
     description: "Classify the ticket AND assign it to the correct team."
     difficulty: medium
     max_steps: 4
     num_scenarios: 5
+    grader: openenv.graders.grader.GraderEngine
 
   - name: hard
     description: >
@@ -33,6 +35,7 @@ tasks:
     difficulty: hard
     max_steps: 5
     num_scenarios: 5
+    grader: openenv.graders.grader.GraderEngine
 
 observation_space:
   type: object
@@ -90,5 +93,5 @@ reward:
     wrong_escalation: -0.3
     excessive_steps: -0.1
   description: >
-    Score is the sum of component credits minus penalties, clipped to [0, 1].
+    Score is the sum of component credits minus penalties, clipped to [0.002, 0.998].
     Partial credit is awarded for each correct component independently.
