@@ -261,14 +261,9 @@ async def main() -> None:
     print(f"[INFO] Using API_BASE_URL={API_BASE_URL} MODEL_NAME={MODEL_NAME}", flush=True)
     client = AsyncOpenAI(base_url=API_BASE_URL, api_key=API_KEY)
 
-    # If a specific task is requested run only that one, otherwise run all three
-    # so the validator can enumerate tasks and verify each grader.
-    if TASK_NAME in ("easy", "medium", "hard"):
-        tasks_to_run = [TASK_NAME]
-    else:
-        tasks_to_run = ["easy", "medium", "hard"]
-
-    for task in tasks_to_run:
+    # Always run all three tasks so the validator can enumerate tasks and
+    # verify each grader produces scores in [0.002, 0.998].
+    for task in ["easy", "medium", "hard"]:
         await run_episode(task, client)
 
 
