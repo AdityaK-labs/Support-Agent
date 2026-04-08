@@ -6,7 +6,4 @@ gradio
 pyyaml
 python-dotenv
 supabase
-transformers>=4.43.0
-torch
-accelerate
 huggingface-hub

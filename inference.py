@@ -6,14 +6,15 @@ import textwrap
 from typing import List, Optional
 
 from dotenv import load_dotenv
-from huggingface_hub import AsyncInferenceClient
+from openai import AsyncOpenAI
 
 load_dotenv()
 
 from support_env import SupportEnvWrapper, SupportAction
 
 IMAGE_NAME = os.getenv("IMAGE_NAME")
-API_KEY = os.getenv("HF_TOKEN") or os.getenv("API_KEY")
+API_BASE_URL = os.getenv("API_BASE_URL")
+API_KEY = os.getenv("HF_TOKEN") or os.getenv("API_KEY")   # HF_TOKEN is primary per spec
 MODEL_NAME = os.getenv("MODEL_NAME", "Qwen/Qwen2.5-72B-Instruct")
 TASK_NAME = os.getenv("SUPPORT_ENV_TASK", "easy")
 BENCHMARK = os.getenv("SUPPORT_ENV_BENCHMARK", "support_env")
@@ -153,13 +154,14 @@ def fallback_policy(state: dict) -> dict:
         "response": "Thank you for contacting support."
     }
 
-async def call_api_model(state: dict, client: AsyncInferenceClient, user_prompt: str) -> dict:
+async def call_api_model(state: dict, client: AsyncOpenAI, user_prompt: str) -> dict:
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": user_prompt},
     ]
     
-    response = await client.chat_completion(
+    response = await client.chat.completions.create(
+        model=MODEL_NAME,
         messages=messages,
         max_tokens=MAX_TOKENS,
         temperature=TEMPERATURE,
@@ -178,20 +180,31 @@ async def call_api_model(state: dict, client: AsyncInferenceClient, user_prompt:
     else:
         raise ValueError(f"No JSON object detected in response. Raw response: {text}")
 
-async def get_action(state: dict, client: AsyncInferenceClient, user_prompt: str) -> SupportAction:
+async def get_action(state: dict, client: AsyncOpenAI, user_prompt: str) -> SupportAction:
+    # API errors (network, auth, rate-limit) must NOT be silently swallowed — they
+    # indicate a misconfigured proxy and must surface so the episode fails visibly.
+    # Only fall back on JSON parse/decode issues where the API was reached but returned
+    # malformed output.
     try:
         data = await call_api_model(state, client, user_prompt)
-        return SupportAction(**data)
-    except Exception as exc:
-        print(f"\n[DEBUG] ❌ Inference or Parse failed: {type(exc).__name__}: {exc}\n", flush=True)
+    except (ValueError, json.JSONDecodeError) as parse_exc:
+        # API was called but response was unparseable — use fallback heuristic
+        print(f"\n[DEBUG] ⚠️ JSON parse failed: {type(parse_exc).__name__}: {parse_exc}\n", flush=True)
         fb_dict = fallback_policy(state)
         return SupportAction(**fb_dict)
+    # All other exceptions (openai.APIConnectionError, openai.AuthenticationError,
+    # httpx errors, etc.) propagate — they will be caught in main() and abort the run
+    # with a visible error, preventing silent fallback-only episodes.
+    return SupportAction(**data)
 
 async def main() -> None:
+    if not API_BASE_URL:
+        raise RuntimeError("[FATAL] API_BASE_URL is not set. The LLM proxy URL must be provided via environment variable.")
     if not API_KEY:
-        print("[WARNING] No HF_TOKEN found! Remote inference will likely fail or hit strict rate limits.")
-        
-    client = AsyncInferenceClient(model=MODEL_NAME, token=API_KEY)
+        raise RuntimeError("[FATAL] HF_TOKEN (or API_KEY) is not set. A valid API key must be provided via environment variable.")
+
+    print(f"[INFO] Using API_BASE_URL={API_BASE_URL} MODEL_NAME={MODEL_NAME}", flush=True)
+    client = AsyncOpenAI(base_url=API_BASE_URL, api_key=API_KEY)
 
     env = await SupportEnvWrapper.from_docker_image(IMAGE_NAME)
     env.env.task_name = TASK_NAME
@@ -249,3 +262,4 @@ async def main() -> None:
 
 if __name__ == "__main__":
     asyncio.run(main())
+
