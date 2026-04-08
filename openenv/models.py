@@ -78,7 +78,7 @@ class Action(BaseModel):
 
 class Reward(BaseModel):
     """Reward signal returned after each step."""
-    score: float = Field(..., ge=0.0, le=1.0, description="Reward score between 0.0 and 1.0")
+    score: float = Field(..., ge=0.002, le=0.998, description="Reward score between 0.002 and 0.998")
     feedback: str = Field(..., description="Human-readable explanation of the score")
 
 

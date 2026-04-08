@@ -79,7 +79,7 @@ action_space:
       description: "Customer-facing response message (used with respond/refund/escalate)"
 
 reward:
-  range: [0.0, 1.0]
+  range: [0.002, 0.998]
   components:
     classification: 0.2
     team_assignment: 0.3
