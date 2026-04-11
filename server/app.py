@@ -702,6 +702,24 @@ button.secondary:hover { border-color: #444 !important; color: #e8e8e8 !importan
 # Static HTML sections
 # ---------------------------------------------------------------------------
 
+def _stat_card(label: str, value: str, small: bool = False) -> str:
+    num_style = (
+        "font-size:20px;font-weight:700;color:#e8e8e8;"
+        "font-family:'JetBrains Mono',monospace;line-height:1.2;padding-top:6px"
+    ) if small else (
+        "font-size:36px;font-weight:700;color:#e8e8e8;"
+        "font-family:'JetBrains Mono',monospace;line-height:1"
+    )
+    return (
+        f"<div style='background:#0d0d0d;border:1px solid #1f1f1f;border-radius:8px;"
+        f"padding:18px 16px 14px;min-width:0'>"
+        f"<div style='font-size:10px;font-weight:600;color:#444;text-transform:uppercase;"
+        f"letter-spacing:1.2px;margin-bottom:10px;font-family:Inter,sans-serif'>{label}</div>"
+        f"<div style='{num_style}'>{value}</div>"
+        f"</div>"
+    )
+
+
 def _hero_html() -> str:
     desc = (
         "A 3-phase Markov Decision Process where LLM agents triage, route, and resolve "
@@ -710,19 +728,43 @@ def _hero_html() -> str:
         "Deterministic per-phase reward shaping. Parameter-randomized ticket selection prevents "
         "memorization — agents must learn the decision pattern, not specific tickets."
     )
-    return f"""
-<div class='hero'>
-  <div class='hero-title'>Customer Support Agent</div>
-  <div class='hero-desc'>{desc}</div>
-  <div class='stat-grid'>
-    <div class='stat-card'><div class='sc-label'>Tickets</div><div class='sc-num'>15</div></div>
-    <div class='stat-card'><div class='sc-label'>Tiers</div><div class='sc-num'>3</div></div>
-    <div class='stat-card'><div class='sc-label'>Phases</div><div class='sc-num'>3</div></div>
-    <div class='stat-card'><div class='sc-label'>Teams</div><div class='sc-num'>6</div></div>
-    <div class='stat-card'><div class='sc-label'>Max Steps</div><div class='sc-num'>5</div></div>
-    <div class='stat-card'><div class='sc-label'>Reward</div><div class='sc-num sm'>[0.002, 0.998]</div></div>
-  </div>
-</div>"""
+    stats = (
+        _stat_card("Tickets",   "15") +
+        _stat_card("Tiers",     "3") +
+        _stat_card("Phases",    "3") +
+        _stat_card("Teams",     "6") +
+        _stat_card("Max Steps", "5") +
+        _stat_card("Reward",    "[0.002,&nbsp;0.998]", small=True)
+    )
+    return (
+        f"<div style='background:#141414;border-bottom:1px solid #1f1f1f;"
+        f"padding:32px 32px 28px;font-family:Inter,sans-serif'>"
+        f"<div style='font-size:26px;font-weight:700;color:#f0f0f0;line-height:1.2;"
+        f"margin-bottom:10px;letter-spacing:-.3px'>Customer Support Agent</div>"
+        f"<div style='font-size:13px;color:#666;line-height:1.75;max-width:860px'>{desc}</div>"
+        f"<div style='display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin-top:24px'>"
+        f"{stats}"
+        f"</div></div>"
+    )
+
+
+def _unique_card(icon: str, title: str, body: str) -> str:
+    svg = _ICONS[icon]
+    return (
+        f"<div style='background:#141414;border:1px solid #222;border-radius:10px;"
+        f"padding:22px;font-family:Inter,sans-serif'>"
+        # icon box
+        f"<div style='width:40px;height:40px;background:#0a2a1a;border:1px solid #1a4a2a;"
+        f"border-radius:8px;display:flex;align-items:center;justify-content:center;"
+        f"margin-bottom:14px'>"
+        f"<svg width='18' height='18' viewBox='0 0 24 24' fill='none' stroke='#00d084' "
+        f"stroke-width='2' stroke-linecap='round' stroke-linejoin='round'>{svg}</svg></div>"
+        # title
+        f"<div style='font-size:14px;font-weight:600;color:#f0f0f0;margin-bottom:8px'>{title}</div>"
+        # body
+        f"<div style='font-size:13px;color:#777;line-height:1.7'>{body}</div>"
+        f"</div>"
+    )
 
 
 def _overview_html() -> str:
@@ -752,35 +794,44 @@ def _overview_html() -> str:
          "Reproducible RL training and evaluation without environment noise "
          "contaminating the reward signal across runs."),
     ]
-    grid = "".join(
-        f"<div class='unique-card'>{_icon_box(_ICONS[icon])}"
-        f"<div class='uc-title'>{title}</div><div class='uc-body'>{body}</div></div>"
-        for icon, title, body in cards
+    grid = (
+        f"<div style='display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));"
+        f"gap:14px;margin-top:4px'>"
+        + "".join(_unique_card(icon, title, body) for icon, title, body in cards)
+        + "</div>"
     )
-    arch = """<div class='code-block'><pre>Episode Flow — 3 sequential steps per ticket:
+    arch = (
+        "<div style='background:#0d1117;border:1px solid #21262d;border-radius:8px;"
+        "overflow:hidden;margin-top:4px'>"
+        "<pre style='padding:20px 24px;font-family:\"JetBrains Mono\",monospace;"
+        "font-size:12px;color:#8b949e;line-height:1.75;margin:0;overflow-x:auto'>"
+        "Episode Flow — 3 sequential steps per ticket:\n\n"
+        "  reset()  →  Observation { issue_type: \"unknown\", sentiment, priority, message }\n\n"
+        "  step({\"action_type\": \"classify\"})                ←  Phase 1: Triage\n"
+        "     reward: 0.998 (correct) | 0.002 (wrong)\n"
+        "     effect: issue_type revealed in next observation\n\n"
+        "  step({\"action_type\": \"assign\", \"team\": \"…\"})     ←  Phase 2: Route\n"
+        "     reward: 0.998 (correct team) | 0.400 (wrong team) | 0.002 (wrong action)\n"
+        "     effect: team context appended to history\n\n"
+        "  step({\"action_type\": \"respond|refund|escalate\"})  ←  Phase 3: Resolve\n"
+        "     reward: proportional quality score in [0.002, 0.998]\n"
+        "     effect: done = True\n\n"
+        "  episode_score = mean(r1, r2, r3)"
+        "</pre></div>"
+    )
+    return (
+        f"<div style='font-family:Inter,sans-serif;padding:0'>"
+        f"<div style='font-size:18px;font-weight:600;color:#f0f0f0;margin-bottom:8px'>What makes this unique</div>"
+        f"<div style='font-size:13px;color:#666;margin-bottom:28px;line-height:1.6'>"
+        f"Six design decisions that differentiate this environment from single-step LLM evaluation benchmarks.</div>"
+        f"{grid}"
+        f"<div style='font-size:18px;font-weight:600;color:#f0f0f0;margin:40px 0 8px'>Episode Architecture</div>"
+        f"<div style='font-size:13px;color:#666;margin-bottom:16px;line-height:1.6'>"
+        f"Each episode is a deterministic 3-step MDP. Observation state updates between phases.</div>"
+        f"{arch}"
+        f"</div>"
+    )
 
-  reset()  →  Observation { issue_type: "unknown", sentiment, priority, message }
-
-  step({"action_type": "classify"})               ←  Phase 1: Triage
-     reward: 0.998  (correct) | 0.002 (wrong)
-     effect: issue_type revealed in next observation
-
-  step({"action_type": "assign", "team": "…"})    ←  Phase 2: Route
-     reward: 0.998  (correct team) | 0.400 (wrong team) | 0.002 (wrong action)
-     effect: team context appended to history
-
-  step({"action_type": "respond|refund|escalate"}) ←  Phase 3: Resolve
-     reward: proportional quality score in [0.002, 0.998]
-     effect: done = True
-
-  episode_score = mean(r1, r2, r3)</pre></div>"""
-    return f"""
-<h2 class='section-h'>What makes this unique</h2>
-<p class='section-sub'>Six design decisions that differentiate this environment from single-step LLM evaluation benchmarks.</p>
-<div class='unique-grid'>{grid}</div>
-<h2 class='section-h' style='margin-top:40px'>Episode Architecture</h2>
-<p class='section-sub'>Each episode is a deterministic 3-step MDP. Observation state updates between phases.</p>
-{arch}"""
 
 
 def _scenarios_html() -> str:
