@@ -128,7 +128,26 @@ def build_user_prompt(step: int, obs: any, history: List[str], phase: int = 1) -
 
 def fallback_policy(phase: int, state: dict) -> dict:
     if phase == 1:
-        return {"action_type": "classify"}
+        msg = state.get("message", "").lower()
+        if any(k in msg for k in ["ship", "deliver", "package", "track", "address"]):
+            issue_type = "shipping"
+        elif any(k in msg for k in ["bill", "charge", "invoice", "payment", "refund", "price"]):
+            issue_type = "billing"
+        elif any(k in msg for k in ["login", "password", "bug", "api", "error", "sync", "data", "account"]):
+            issue_type = "technical"
+        elif any(k in msg for k in ["return", "wrong item", "broken", "damaged"]):
+            issue_type = "returns"
+        elif any(k in msg for k in ["overheat", "fire", "safety", "defect", "recall", "hazard"]):
+            issue_type = "safety"
+        elif any(k in msg for k in ["cancel", "subscription", "renewal"]):
+            issue_type = "cancellation"
+        elif any(k in msg for k in ["angry", "complaint", "manager", "terrible"]):
+            issue_type = "complaint"
+        elif any(k in msg for k in ["order", "bulk", "corporate", "gift", "stock"]):
+            issue_type = "orders"
+        else:
+            issue_type = "billing"
+        return {"action_type": "classify", "response": issue_type}
     elif phase == 2:
         msg = state["message"].lower()
         if any(k in msg for k in ["ship", "deliver", "package", "track"]):
@@ -196,8 +215,7 @@ async def get_action(phase: int, state: dict, client: AsyncOpenAI, user_prompt: 
 
 async def run_episode(task_name: str, client: AsyncOpenAI) -> None:
     """Run one full 3-phase episode for the given task and emit START/STEP/END logs."""
-    env = await SupportEnvWrapper.from_docker_image(IMAGE_NAME)
-    env.env.task_name = task_name
+    env = await SupportEnvWrapper.from_docker_image(IMAGE_NAME, task=task_name)
 
     history: List[str] = []
     rewards: List[float] = []

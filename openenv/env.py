@@ -14,8 +14,10 @@ PHASE_LABELS = {
 
 PHASE_INSTRUCTIONS = {
     1: (
-        "PHASE 1 — TRIAGE: Read the ticket and classify it.\n"
-        "Required action: {\"action_type\": \"classify\"}"
+        "PHASE 1 — TRIAGE: Read the ticket carefully and classify it.\n"
+        "Identify the issue type and include it in the response field.\n"
+        "Issue types: shipping, billing, technical, returns, safety, cancellation, complaint, orders, sales\n"
+        "Required action: {\"action_type\": \"classify\", \"response\": \"<issue_type>\"}"
     ),
     2: (
         "PHASE 2 — ROUTE: Assign the ticket to the correct specialist team.\n"

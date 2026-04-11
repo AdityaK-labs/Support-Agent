@@ -28,5 +28,5 @@ class SupportEnvWrapper:
         self.env.close()
 
     @classmethod
-    async def from_docker_image(cls, image_name: str = None):
-        return cls()
+    async def from_docker_image(cls, image_name: str = None, task: str = "easy"):
+        return cls(task=task)
