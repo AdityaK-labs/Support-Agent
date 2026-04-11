@@ -16,8 +16,6 @@ dependencies = [
     "gradio",
     "pyyaml",
     "python-dotenv",
-    "supabase",
-    "huggingface-hub",
     "openenv-core"
 ]
 

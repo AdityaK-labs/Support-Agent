@@ -5,5 +5,3 @@ pydantic
 gradio
 pyyaml
 python-dotenv
-supabase
-huggingface-hub

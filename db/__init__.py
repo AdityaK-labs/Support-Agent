@@ -1,1 +1,0 @@
-"""Database integration with Supabase."""

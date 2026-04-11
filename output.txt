@@ -1,4 +1,0 @@
-[START] task=easy env=support_env model=meta-llama/Meta-Llama-3-8B-Instruct
-[DEBUG] Model request failed: Error code: 410 - {'error': 'https://api-inference.huggingface.co is no longer supported. Please use https://router.huggingface.co instead.'}
-[STEP] step=1 action={"action_type": "classify", "team": "general", "response": "Thank you for contacting support."} reward=0.30 done=true error=null
-[END] success=false steps=1 score=0.300 rewards=0.30
