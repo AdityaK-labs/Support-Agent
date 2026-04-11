@@ -11,8 +11,8 @@ HARD_TASKS = [
         ),
         ground_truth=GroundTruth(
             issue_type="complaint",
-            action_type="escalate",
             team="management_team",
+            action_type="escalate",
             response_keywords=["apologize", "manager", "escalated", "order #12345"],
             requires_escalation=True
         )
@@ -27,6 +27,7 @@ HARD_TASKS = [
         ),
         ground_truth=GroundTruth(
             issue_type="returns",
+            team="orders_team",
             action_type="refund",
             response_keywords=["apologize", "refund", "return shipping", "red"],
             requires_refund=True
@@ -42,6 +43,7 @@ HARD_TASKS = [
         ),
         ground_truth=GroundTruth(
             issue_type="technical",
+            team="tech_support_team",
             action_type="respond",
             response_keywords=["api", "rate limit", "hourly", "daily", "429"]
         )
@@ -56,6 +58,7 @@ HARD_TASKS = [
         ),
         ground_truth=GroundTruth(
             issue_type="sales",
+            team="orders_team",
             action_type="respond",
             response_keywords=["standard plan", "custom domains"]
         )
@@ -70,8 +73,8 @@ HARD_TASKS = [
         ),
         ground_truth=GroundTruth(
             issue_type="technical",
-            action_type="escalate",
             team="tech_support_team",
+            action_type="escalate",
             response_keywords=["data", "recover", "urgently", "escalated"],
             requires_escalation=True
         )

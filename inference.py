@@ -22,7 +22,7 @@ BENCHMARK = os.getenv("SUPPORT_ENV_BENCHMARK", "support_env")
 MAX_STEPS = 5
 TEMPERATURE = 0.2
 MAX_TOKENS = 500
-SUCCESS_SCORE_THRESHOLD = 0.5 
+SUCCESS_SCORE_THRESHOLD = 0.5
 
 _MAX_REWARD_PER_STEP = 1.0
 MAX_TOTAL_REWARD = MAX_STEPS * _MAX_REWARD_PER_STEP
@@ -30,60 +30,40 @@ MAX_TOTAL_REWARD = MAX_STEPS * _MAX_REWARD_PER_STEP
 SYSTEM_PROMPT = textwrap.dedent(
     """
     You are an autonomous customer support agent for a large e-commerce and SaaS company.
-    Read the customer ticket carefully and take exactly ONE action to resolve it.
 
-    STANDARD OPERATING PROCEDURE (SOP):
+    EVERY episode runs through exactly 3 phases. Complete each phase in order:
 
-    ACTION DECISION RULES - follow strictly in order:
+    ── PHASE 1: TRIAGE ──────────────────────────────────────────────────────
+    Read the ticket and classify the issue type.
+    Action: {"action_type": "classify"}
+    (No team, no response needed in this phase)
 
-    1. USE classify
-       - When the issue type is 'unknown' and just needs categorization (simple address changes, account updates).
-       - Do NOT include team or response.
+    ── PHASE 2: ROUTE ───────────────────────────────────────────────────────
+    Assign the ticket to the correct specialist team.
+    Action: {"action_type": "assign", "team": "<team_name>"}
+    Team directory:
+      logistics_team      → lost packages, shipping, delivery
+      tech_support_team   → login, password, bugs, API errors, data loss
+      safety_team         → defects, overheating, recalls, hazards
+      finance_team        → invoices, billing, tax, payment issues
+      orders_team         → bulk orders, corporate accounts, returns, subscriptions
+      management_team     → escalated complaints, refund delays, manager requests
 
-    2. USE assign + correct TEAM
-       - When the ticket requires specialist handling.
-       - Always set 'team' to EXACTLY one from this directory:
-         * logistics_team      -> Lost packages, shipping tracking, delivery disputes
-         * tech_support_team   -> Login issues, password resets, software bugs, API errors, data loss
-         * safety_team         -> Product defects, overheating, recalls, safety hazards
-         * finance_team        -> Invoice errors, billing corrections, tax/payment issues
-         * orders_team         -> Bulk orders, corporate accounts, order modifications
-         * management_team     -> Escalated complaints, refund delays, manager requests
+    ── PHASE 3: RESOLVE ─────────────────────────────────────────────────────
+    Take the ONE correct resolution action:
+      escalate — customer demands manager, extreme anger, OR safety/data emergency
+                 Always include team + response. PENALTY -0.30 if unnecessary.
+      refund   — product definitively broken/wrong and company is at fault
+                 Always include response. PENALTY -0.50 if unnecessary.
+      respond  — customer needs information (policy, pricing, features, technical)
+                 Write a detailed, specific response addressing their exact question.
 
-    3. USE escalate + correct TEAM
-       - When the customer is extremely angry, threatening, or explicitly requests a manager.
-       - When a severe safety issue is involved.
-       - Set team to management_team (or safety_team for hazards).
-       - Always include both 'team' and 'response'.
-       - PUNISHMENT: Using escalate when NOT required costs -0.30 score.
-
-    4. USE refund
-       - ONLY when a product was definitively broken on arrival or provably the company's fault.
-       - Always include a 'response' explaining the refund.
-       - PUNISHMENT: Issuing refund when NOT required costs -0.50 score.
-
-    5. USE respond
-       - When the customer needs information: policy, pricing, features, or technical details.
-       - Include a detailed 'response' addressing their specific question with exact details from their message.
-
-    PUNISHMENT SUMMARY:
-    - Unnecessary refund:     -0.50
-    - Unnecessary escalation: -0.30
-    - Wrong team assigned:    -0.15
-    - More than 3 steps:      -0.10 per extra step
-
-    OUTPUT FORMAT - MANDATORY:
-    Respond with ONLY a raw JSON object. No markdown, no explanation, no code fences.
-    Schema:
+    OUTPUT FORMAT — MANDATORY:
+    Respond with ONLY a raw JSON object. No markdown, no explanation.
     {"action_type": "...", "team": "...", "response": "..."}
-
-    Examples:
-    {"action_type": "classify"}
-    {"action_type": "assign", "team": "tech_support_team"}
-    {"action_type": "escalate", "team": "management_team", "response": "I sincerely apologize for the experience. I am escalating order #12345 to our management team immediately."}
-    {"action_type": "respond", "response": "Our API rate limits reset hourly. The 429 error means you have exceeded the limit for that hour. Please wait 60 minutes or contact us to discuss a higher plan."}
     """
 ).strip()
+
 
 def log_start(task: str, env: str, model: str) -> None:
     print(f"[START] task={task} env={env} model={model}", flush=True)
@@ -100,41 +80,27 @@ def log_end(success: bool, steps: int, score: float, rewards: List[float]) -> No
     rewards_str = ",".join(f"{r:.2f}" for r in rewards)
     print(f"[END] success={str(success).lower()} steps={steps} score={score:.3f} rewards={rewards_str}", flush=True)
 
-TASK_INSTRUCTIONS = {
-    "easy": (
-        "TASK LEVEL: EASY\n"
-        "YOUR ONLY VALID ACTION: classify\n"
-        "DO NOT assign, respond, refund, or escalate.\n"
-        "Just output: {\"action_type\": \"classify\"}"
+
+PHASE_PROMPTS = {
+    1: (
+        "CURRENT PHASE: 1 — TRIAGE\n"
+        "Your task: Classify this ticket.\n"
+        "Output exactly: {\"action_type\": \"classify\"}"
     ),
-    "medium": (
-        "TASK LEVEL: MEDIUM\n"
-        "YOUR ONLY VALID ACTION: assign + correct team\n"
-        "DO NOT classify, respond, refund, or escalate — even if the customer is angry.\n"
-        "Pick the right team:\n"
-        "  shipping/delivery → logistics_team\n"
-        "  login/password/bug/data/api → tech_support_team\n"
-        "  overheating/safety/defect → safety_team\n"
-        "  invoice/billing/payment → finance_team\n"
-        "  bulk/corporate orders → orders_team\n"
-        "  manager request/refund delay → management_team\n"
+    2: (
+        "CURRENT PHASE: 2 — ROUTE\n"
+        "The issue type has been revealed in the history. Assign to the correct team.\n"
         "Output: {\"action_type\": \"assign\", \"team\": \"<team_name>\"}"
     ),
-    "hard": (
-        "TASK LEVEL: HARD\n"
-        "Choose the ONE correct action:\n"
-        "  escalate — customer demands manager, extreme anger, OR data loss/safety emergency\n"
-        "            Always include team + response.\n"
-        "  refund   — product provably wrong/broken and company is at fault\n"
-        "            Always include response.\n"
-        "  respond  — customer needs information (pricing, features, policy, technical details)\n"
-        "            Write a detailed, specific response addressing their exact question.\n"
-        "DO NOT classify or assign on hard tasks."
+    3: (
+        "CURRENT PHASE: 3 — RESOLVE\n"
+        "Choose the correct final action: escalate / refund / respond.\n"
+        "Include team if escalating. Include a detailed response for respond/refund/escalate."
     ),
 }
 
 
-def build_user_prompt(step: int, obs: any, history: List[str], task_name: str = "easy") -> str:
+def build_user_prompt(step: int, obs: any, history: List[str], phase: int = 1) -> str:
     obs_dict = {
         "ticket_id": obs.ticket_id,
         "issue_type": obs.issue_type,
@@ -142,11 +108,11 @@ def build_user_prompt(step: int, obs: any, history: List[str], task_name: str = 
         "priority": obs.priority,
         "message": obs.message,
     }
-    history_block = "\n".join(history[-4:]) if history else "None"
-    task_instruction = TASK_INSTRUCTIONS.get(task_name, TASK_INSTRUCTIONS["easy"])
+    history_block = "\n".join(history[-6:]) if history else "None"
+    phase_instruction = PHASE_PROMPTS.get(phase, PHASE_PROMPTS[3])
     return textwrap.dedent(
         f"""
-        {task_instruction}
+        {phase_instruction}
 
         Step: {step}
         Ticket: {json.dumps(obs_dict, indent=2)}
@@ -157,56 +123,53 @@ def build_user_prompt(step: int, obs: any, history: List[str], task_name: str = 
         """
     ).strip()
 
-def fallback_policy(state: dict) -> dict:
-    msg = state["message"].lower()
 
-    # Refund cases
-    if "refund" in msg or "money" in msg:
+def fallback_policy(phase: int, state: dict) -> dict:
+    if phase == 1:
+        return {"action_type": "classify"}
+    elif phase == 2:
+        msg = state["message"].lower()
+        if any(k in msg for k in ["ship", "deliver", "package", "track"]):
+            team = "logistics_team"
+        elif any(k in msg for k in ["login", "password", "bug", "api", "data", "error"]):
+            team = "tech_support_team"
+        elif any(k in msg for k in ["overheat", "fire", "safety", "defect"]):
+            team = "safety_team"
+        elif any(k in msg for k in ["invoice", "bill", "charge", "payment"]):
+            team = "finance_team"
+        elif any(k in msg for k in ["bulk", "corporate", "order", "return", "cancel"]):
+            team = "orders_team"
+        else:
+            team = "management_team"
+        return {"action_type": "assign", "team": team}
+    else:
+        if state.get("sentiment") == "angry":
+            return {
+                "action_type": "escalate",
+                "team": "management_team",
+                "response": "We sincerely apologize. I am escalating your issue to our management team immediately.",
+            }
         return {
-            "action_type": "refund",
-            "team": "billing",
-            "response": "We have processed your refund. Apologies for the inconvenience."
+            "action_type": "respond",
+            "response": "Thank you for contacting us. Our team will look into this and get back to you shortly.",
         }
 
-    # Technical issues
-    elif "login" in msg or "error" in msg or "bug" in msg:
-        return {
-            "action_type": "assign",
-            "team": "tech",
-            "response": "Our technical team is looking into your issue."
-        }
 
-    # Angry customer
-    elif state["sentiment"] == "angry":
-        return {
-            "action_type": "escalate",
-            "team": "priority_support",
-            "response": "We are escalating your issue for immediate attention."
-        }
-
-    # Default
-    return {
-        "action_type": "classify",
-        "team": "general",
-        "response": "Thank you for contacting support."
-    }
-
-async def call_api_model(state: dict, client: AsyncOpenAI, user_prompt: str) -> dict:
+async def call_api_model(client: AsyncOpenAI, user_prompt: str) -> dict:
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": user_prompt},
     ]
-    
+
     response = await client.chat.completions.create(
         model=MODEL_NAME,
         messages=messages,
         max_tokens=MAX_TOKENS,
         temperature=TEMPERATURE,
     )
-    
+
     text = response.choices[0].message.content.strip()
-    
-    # Robust Regex Extraction to ignore markdown/chatty text padding
+
     json_match = re.search(r"(\{.*\})", text, re.DOTALL)
     if json_match:
         clean_json = json_match.group(1)
@@ -217,18 +180,20 @@ async def call_api_model(state: dict, client: AsyncOpenAI, user_prompt: str) -> 
     else:
         raise ValueError(f"No JSON object detected in response. Raw response: {text}")
 
-async def get_action(state: dict, client: AsyncOpenAI, user_prompt: str) -> tuple[SupportAction, Optional[str]]:
+
+async def get_action(phase: int, state: dict, client: AsyncOpenAI, user_prompt: str) -> tuple[SupportAction, Optional[str]]:
     """Returns (action, error_message). error_message is None on success."""
     try:
-        data = await call_api_model(state, client, user_prompt)
+        data = await call_api_model(client, user_prompt)
         return SupportAction(**data), None
     except Exception as exc:
         err = f"{type(exc).__name__}: {exc}"
         print(f"[DEBUG] ⚠️ API/parse error: {err}", flush=True)
-        return SupportAction(**fallback_policy(state)), err
+        return SupportAction(**fallback_policy(phase, state)), err
+
 
 async def run_episode(task_name: str, client: AsyncOpenAI) -> None:
-    """Run one full episode for the given task and emit START/STEP/END logs."""
+    """Run one full 3-phase episode for the given task and emit START/STEP/END logs."""
     env = await SupportEnvWrapper.from_docker_image(IMAGE_NAME)
     env.env.task_name = task_name
 
@@ -243,17 +208,18 @@ async def run_episode(task_name: str, client: AsyncOpenAI) -> None:
     try:
         result = await env.reset()
         obs = result.observation
+        phase = 1
 
         for step in range(1, MAX_STEPS + 1):
             if result.done:
                 break
 
-            user_prompt = build_user_prompt(step, obs, history, task_name)
+            user_prompt = build_user_prompt(step, obs, history, phase=phase)
             state_dict = {
                 "message": obs.message,
                 "sentiment": obs.sentiment,
             }
-            action, step_error = await get_action(state_dict, client, user_prompt)
+            action, step_error = await get_action(phase, state_dict, client, user_prompt)
             action_str = json.dumps(action.model_dump())
 
             result = await env.step(action)
@@ -261,11 +227,15 @@ async def run_episode(task_name: str, client: AsyncOpenAI) -> None:
             reward = result.reward or 0.0
             done = result.done
 
+            # Advance phase tracking based on step count (phases 1→2→3)
+            if phase < 3:
+                phase += 1
+
             rewards.append(reward)
             steps_taken = step
 
             log_step(step=step, action=action_str, reward=reward, done=done, error=step_error)
-            history.append(f"Step {step}: {action_str} -> reward {reward:+.2f}")
+            history.append(f"Step {step} (phase {phase-1 if phase > 1 else 1}): {action_str} -> reward {reward:+.2f}")
 
             if done:
                 break
@@ -304,4 +274,3 @@ async def main() -> None:
 
 if __name__ == "__main__":
     asyncio.run(main())
-

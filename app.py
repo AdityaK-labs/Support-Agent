@@ -135,58 +135,46 @@ def mcp(request: dict = None):
 
 SYSTEM_PROMPT = textwrap.dedent("""
     You are an autonomous customer support agent for a large e-commerce and SaaS company.
-    Read the customer ticket carefully and take exactly ONE action to resolve it.
 
-    ACTION DECISION RULES:
-    1. classify  — ticket just needs categorisation (unknown issue type, no team needed)
-    2. assign    — needs specialist: logistics_team, tech_support_team, safety_team,
-                   finance_team, orders_team, management_team
-    3. escalate  — extremely angry customer, safety hazard, or explicit manager request.
-                   Always include team + response. PENALTY -0.30 if unnecessary.
-    4. refund    — product broken on arrival / provably company fault.
-                   Always include response. PENALTY -0.50 if unnecessary.
-    5. respond   — customer needs information; write a detailed, specific response.
+    EVERY episode runs through exactly 3 phases. Complete each phase in order:
+
+    PHASE 1 — TRIAGE: Classify the ticket issue type.
+    Action: {"action_type": "classify"}
+
+    PHASE 2 — ROUTE: Assign to the correct specialist team.
+    Action: {"action_type": "assign", "team": "<team_name>"}
+    Teams: logistics_team | tech_support_team | safety_team | finance_team | orders_team | management_team
+
+    PHASE 3 — RESOLVE: Take the final resolution action.
+      escalate — angry/manager request/safety emergency (include team + response). PENALTY -0.30 if unnecessary.
+      refund   — provably company fault/wrong product (include response). PENALTY -0.50 if unnecessary.
+      respond  — customer needs information; write a detailed specific response.
 
     OUTPUT FORMAT — MANDATORY:
     Raw JSON only. No markdown, no explanation.
     {"action_type": "...", "team": "...", "response": "..."}
 """).strip()
 
-
-TASK_INSTRUCTIONS = {
-    "easy": (
-        "TASK LEVEL: EASY\n"
-        "YOUR ONLY VALID ACTION: classify\n"
-        "DO NOT assign, respond, refund, or escalate.\n"
+PHASE_PROMPTS = {
+    1: (
+        "CURRENT PHASE: 1 — TRIAGE\n"
+        "Your task: Classify this ticket.\n"
         "Output exactly: {\"action_type\": \"classify\"}"
     ),
-    "medium": (
-        "TASK LEVEL: MEDIUM\n"
-        "YOUR ONLY VALID ACTION: assign + correct team\n"
-        "DO NOT classify, respond, refund, or escalate — even if the customer is angry.\n"
-        "Pick the right team:\n"
-        "  shipping/delivery → logistics_team\n"
-        "  login/password/bug/data/api → tech_support_team\n"
-        "  overheating/safety/defect → safety_team\n"
-        "  invoice/billing/payment → finance_team\n"
-        "  bulk/corporate orders → orders_team\n"
-        "  manager request/refund delay → management_team\n"
+    2: (
+        "CURRENT PHASE: 2 — ROUTE\n"
+        "The issue type is now known (see history). Assign to the correct team.\n"
         "Output: {\"action_type\": \"assign\", \"team\": \"<team_name>\"}"
     ),
-    "hard": (
-        "TASK LEVEL: HARD\n"
-        "Choose the ONE correct action:\n"
-        "  escalate — customer demands manager, extreme anger, OR data loss/safety emergency. "
-        "Include team + response.\n"
-        "  refund   — product provably wrong/broken and company is at fault. Include response.\n"
-        "  respond  — customer needs information (pricing, features, policy, technical details). "
-        "Write a detailed specific response.\n"
-        "DO NOT classify or assign on hard tasks."
+    3: (
+        "CURRENT PHASE: 3 — RESOLVE\n"
+        "Choose the correct final action: escalate / refund / respond.\n"
+        "Include team if escalating. Include a detailed response for respond/refund/escalate."
     ),
 }
 
 
-def _build_prompt(obs, history: List[str], task_name: str = "easy") -> str:
+def _build_prompt(obs, history: List[str], phase: int = 1) -> str:
     ctx = {
         "ticket_id":  obs.ticket_id,
         "issue_type": obs.issue_type,
@@ -194,8 +182,8 @@ def _build_prompt(obs, history: List[str], task_name: str = "easy") -> str:
         "priority":   obs.priority,
         "message":    obs.message,
     }
-    hist = "\n".join(history[-4:]) if history else "None"
-    instruction = TASK_INSTRUCTIONS.get(task_name, TASK_INSTRUCTIONS["easy"])
+    hist = "\n".join(history[-6:]) if history else "None"
+    instruction = PHASE_PROMPTS.get(phase, PHASE_PROMPTS[3])
     return textwrap.dedent(f"""
         {instruction}
 
@@ -206,11 +194,11 @@ def _build_prompt(obs, history: List[str], task_name: str = "easy") -> str:
     """).strip()
 
 
-async def _call_llm(obs, history: List[str], task_name: str = "easy") -> dict:
+async def _call_llm(obs, history: List[str], phase: int = 1) -> dict:
     if not API_BASE_URL or not API_KEY:
         raise RuntimeError("API_BASE_URL / HF_TOKEN not configured.")
     client = AsyncOpenAI(base_url=API_BASE_URL, api_key=API_KEY)
-    prompt = _build_prompt(obs, history, task_name)
+    prompt = _build_prompt(obs, history, phase)
     resp = await client.chat.completions.create(
         model=MODEL_NAME,
         messages=[
@@ -284,20 +272,28 @@ async def ui_auto_step():
     team_lines = []
 
     MAX_UI_STEPS = 5
+    PHASE_NAMES = {1: "Triage", 2: "Route", 3: "Resolve"}
 
     for step_num in range(1, MAX_UI_STEPS + 1):
         if env.done:
             break
 
         obs = env.get_current_observation()
+        current_phase = env.phase
 
         try:
-            action_data = await _call_llm(obs, _agent_history, env.task_name)
+            action_data = await _call_llm(obs, _agent_history, phase=current_phase)
             action = Action(**action_data)
             error_msg = None
         except Exception as exc:
             error_msg = str(exc)
-            action = Action(action_type="classify")
+            # Phase-appropriate fallback
+            if current_phase == 1:
+                action = Action(action_type="classify")
+            elif current_phase == 2:
+                action = Action(action_type="assign", team="management_team")
+            else:
+                action = Action(action_type="respond", response="Thank you for contacting us.")
 
         result = env.step(action)
         reward = result.reward
@@ -306,7 +302,8 @@ async def ui_auto_step():
         _agent_history = env.history.copy()
         all_rewards.append(reward)
 
-        step_line = f"Step {step_num}: {action.action_type}"
+        phase_label = PHASE_NAMES.get(current_phase, str(current_phase))
+        step_line = f"[Phase {current_phase}: {phase_label}] Step {step_num}: {action.action_type}"
         if action.team:
             step_line += f" → {action.team}"
         step_line += f"  |  score: {reward:.3f}"
@@ -370,7 +367,8 @@ def ui_manual_step(a_type: str, t_name: str, resp_text: str):
         reward  = result.reward
         done    = result.done
 
-        act_summary = f"Action:  {a_type}"
+        phase_num = result.info.get("phase", "?")
+        act_summary = f"Phase: {phase_num}  Action: {a_type}"
         if t_name:
             act_summary += f"\nTeam:    {t_name}"
 
@@ -450,7 +448,7 @@ with gr.Blocks(title="OpenEnv Support Agent", theme=gr.themes.Soft()) as demo:
         with gr.Column(scale=1):
             gr.Markdown("### Agent")
 
-            auto_btn = gr.Button("Run Agent Step", variant="primary", size="lg")
+            auto_btn = gr.Button("Run Agent (Full Episode)", variant="primary", size="lg")
 
             msg_box = gr.Textbox(
                 label="Agent Message / Response",

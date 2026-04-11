@@ -11,7 +11,9 @@ EASY_TASKS = [
         ),
         ground_truth=GroundTruth(
             issue_type="shipping",
-            action_type="classify",
+            team="logistics_team",
+            action_type="respond",
+            response_keywords=["shipping address", "updated", "order"],
         )
     ),
     TicketScenario(
@@ -24,7 +26,10 @@ EASY_TASKS = [
         ),
         ground_truth=GroundTruth(
             issue_type="billing",
-            action_type="classify",
+            team="finance_team",
+            action_type="refund",
+            response_keywords=["double charge", "refund", "apologize"],
+            requires_refund=True,
         )
     ),
     TicketScenario(
@@ -37,7 +42,9 @@ EASY_TASKS = [
         ),
         ground_truth=GroundTruth(
             issue_type="technical",
-            action_type="classify",
+            team="tech_support_team",
+            action_type="respond",
+            response_keywords=["profile", "settings", "update"],
         )
     ),
     TicketScenario(
@@ -50,7 +57,10 @@ EASY_TASKS = [
         ),
         ground_truth=GroundTruth(
             issue_type="returns",
-            action_type="classify",
+            team="orders_team",
+            action_type="refund",
+            response_keywords=["broken", "refund", "apologize", "return"],
+            requires_refund=True,
         )
     ),
     TicketScenario(
@@ -63,7 +73,9 @@ EASY_TASKS = [
         ),
         ground_truth=GroundTruth(
             issue_type="cancellation",
-            action_type="classify",
+            team="orders_team",
+            action_type="respond",
+            response_keywords=["subscription", "cancel", "renewal"],
         )
     )
 ]

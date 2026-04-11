@@ -1,28 +1,95 @@
 from typing import Dict, Any
 from openenv.models import Action, GroundTruth, Reward
 
+
 class GraderEngine:
+
+    @staticmethod
+    def grade_phase(action: Action, ground_truth: GroundTruth, phase: int, step_count: int) -> Reward:
+        """
+        Phase-aware grading for 3-phase RL episodes.
+
+        Phase 1 — Triage:
+            Agent must classify the ticket.
+            Score: 0.998 if action_type=="classify", else 0.002.
+
+        Phase 2 — Route:
+            Agent must assign to the correct team.
+            Score: 0.998 for correct team, 0.4 for wrong team, 0.002 for wrong action type.
+
+        Phase 3 — Resolve:
+            Agent must take the correct resolution action (respond/refund/escalate)
+            with sufficient response quality.
+            Score: full GraderEngine.grade() output (0.002 – 0.998).
+
+        Per-step rewards are averaged across phases in inference.py.
+        A perfect 3-step episode averages to ~0.998.
+        """
+        if phase == 1:
+            if action.action_type == "classify":
+                return Reward(
+                    score=0.998,
+                    feedback="[+] Phase 1 (Triage): Correct classify action | +0.998"
+                )
+            else:
+                return Reward(
+                    score=0.002,
+                    feedback=f"[-] Phase 1 (Triage): Expected classify, got '{action.action_type}' | 0.002"
+                )
+
+        elif phase == 2:
+            if action.action_type != "assign":
+                return Reward(
+                    score=0.002,
+                    feedback=f"[-] Phase 2 (Route): Expected assign, got '{action.action_type}' | 0.002"
+                )
+            if not ground_truth.team:
+                return Reward(
+                    score=0.998,
+                    feedback="[+] Phase 2 (Route): Assign accepted (no team constraint) | +0.998"
+                )
+            if action.team == ground_truth.team:
+                return Reward(
+                    score=0.998,
+                    feedback=f"[+] Phase 2 (Route): Correct team '{action.team}' | +0.998"
+                )
+            elif action.team:
+                return Reward(
+                    score=0.4,
+                    feedback=f"[-] Phase 2 (Route): Wrong team — expected '{ground_truth.team}', got '{action.team}' | 0.4"
+                )
+            else:
+                return Reward(
+                    score=0.002,
+                    feedback=f"[-] Phase 2 (Route): Missing team (expected '{ground_truth.team}') | 0.002"
+                )
+
+        elif phase == 3:
+            return GraderEngine.grade(action, ground_truth, step_count)
+
+        else:
+            return Reward(score=0.002, feedback=f"[!] Unknown phase {phase}")
+
     @staticmethod
     def grade(action: Action, ground_truth: GroundTruth, step_count: int) -> Reward:
         """
-        Normalized grader: score is proportional to what the scenario demands.
-        
+        Normalized grader for the resolution phase (phase 3).
+
         Scoring breakdown (before normalization):
           +0.3  correct action_type
           +0.3  correct team assignment (only if ground_truth.team exists)
           +0.4  response keyword coverage (only if ground_truth.response_keywords exist)
-        
+
         Normalization: final positives are divided by max_possible so that
-        a scenario that only tests action_type (e.g. Easy tasks = classify)
-        can legitimately reach 1.0.
+        a scenario that only tests action_type can legitimately reach 1.0.
 
         Punishments (applied after normalization, before clamping):
           -0.50  Unnecessary refund issued
           -0.30  Unnecessary escalation
           -0.15  Wrong team selected (when ground_truth has a team)
           -0.10  per step beyond 3 (excessive steps)
-        
-        Final score is clamped to [0.0, 1.0].
+
+        Final score is clamped to [0.002, 0.998].
         """
         raw_score = 0.0
         max_possible = 0.0
@@ -52,7 +119,6 @@ class GraderEngine:
                 raw_score += 0.3
                 feedback_parts.append(f"[+] Correct team='{action.team}': +0.30")
             elif action.team:
-                # Picked SOMETHING but wrong — half-credit removed as punishment
                 punishment_total += 0.15
                 feedback_parts.append(
                     f"[-] Wrong team: expected='{ground_truth.team}', "
@@ -62,7 +128,7 @@ class GraderEngine:
                 feedback_parts.append(f"[-] Missing team (expected '{ground_truth.team}')")
 
         # ------------------------------------------------------------------ #
-        # 3. Response Keyword Coverage (max contribution: 0.4, only if gt.keywords set)
+        # 3. Response Keyword Coverage (max contribution: 0.4)
         # ------------------------------------------------------------------ #
         if ground_truth.response_keywords:
             max_possible += 0.4
@@ -87,7 +153,7 @@ class GraderEngine:
                 feedback_parts.append("[-] No response text provided (required for keyword score)")
 
         # ------------------------------------------------------------------ #
-        # Normalize raw_score → proportional_score ∈ [0.0, 1.0]
+        # Normalize
         # ------------------------------------------------------------------ #
         proportional_score = (raw_score / max_possible) if max_possible > 0 else 0.0
         feedback_parts.append(
@@ -95,19 +161,16 @@ class GraderEngine:
         )
 
         # ------------------------------------------------------------------ #
-        # Punishments (applied after normalization, on top of proportional score)
+        # Punishments
         # ------------------------------------------------------------------ #
-        # Unnecessary refund — heavy punishment
         if action.action_type == "refund" and not ground_truth.requires_refund:
             punishment_total += 0.50
             feedback_parts.append("[!] PUNISHMENT: Unnecessary refund (-0.50)")
 
-        # Unnecessary escalation — moderate punishment
         if action.action_type == "escalate" and not ground_truth.requires_escalation:
             punishment_total += 0.30
             feedback_parts.append("[!] PUNISHMENT: Unnecessary escalation (-0.30)")
 
-        # Excessive steps — creeping penalty
         if step_count > 3:
             step_penalty = (step_count - 3) * 0.10
             punishment_total += step_penalty
@@ -116,9 +179,6 @@ class GraderEngine:
         if punishment_total > 0:
             feedback_parts.append(f"[=] Total punishment: -{punishment_total:.2f}")
 
-        # ------------------------------------------------------------------ #
-        # Final score: clamp to [0.0, 1.0]
-        # ------------------------------------------------------------------ #
         final_score = max(0.002, min(0.998, proportional_score - punishment_total))
         feedback_parts.append(f"[FINAL] Score: {final_score:.3f}")
 

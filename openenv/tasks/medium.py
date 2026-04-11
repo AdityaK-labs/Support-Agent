@@ -11,8 +11,9 @@ MEDIUM_TASKS = [
         ),
         ground_truth=GroundTruth(
             issue_type="shipping",
-            action_type="assign",
-            team="logistics_team"
+            team="logistics_team",
+            action_type="respond",
+            response_keywords=["package", "tracking", "investigate", "delivered"],
         )
     ),
     TicketScenario(
@@ -20,14 +21,15 @@ MEDIUM_TASKS = [
             ticket_id="TKT-M002",
             issue_type="unknown",
             sentiment="angry",
-            priority="high",
+            priority="critical",
             message="There is a dangerous defect with this product! It overheated and almost caught fire. You need to investigate this.",
         ),
         ground_truth=GroundTruth(
             issue_type="safety",
-            action_type="assign",
             team="safety_team",
-            requires_escalation=True
+            action_type="escalate",
+            response_keywords=["safety", "investigation", "immediately", "hazard"],
+            requires_escalation=True,
         )
     ),
     TicketScenario(
@@ -40,8 +42,9 @@ MEDIUM_TASKS = [
         ),
         ground_truth=GroundTruth(
             issue_type="technical",
-            action_type="assign",
-            team="tech_support_team"
+            team="tech_support_team",
+            action_type="respond",
+            response_keywords=["login", "password", "reset", "email"],
         )
     ),
     TicketScenario(
@@ -54,8 +57,9 @@ MEDIUM_TASKS = [
         ),
         ground_truth=GroundTruth(
             issue_type="billing",
-            action_type="assign",
-            team="finance_team"
+            team="finance_team",
+            action_type="respond",
+            response_keywords=["invoice", "company name", "corrected"],
         )
     ),
     TicketScenario(
@@ -68,8 +72,9 @@ MEDIUM_TASKS = [
         ),
         ground_truth=GroundTruth(
             issue_type="orders",
-            action_type="assign",
-            team="orders_team"
+            team="orders_team",
+            action_type="respond",
+            response_keywords=["bulk", "discount", "corporate", "units"],
         )
     )
 ]
