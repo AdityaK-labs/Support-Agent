@@ -11,201 +11,263 @@ pinned: false
 
 **Meta PyTorch Hackathon x Scaler School of Technology — Round 1**
 
-An LLM-powered autonomous agent that resolves customer support tickets inside a fully OpenEnv-compliant RL environment. The agent reads ticket context (sentiment, priority, issue type, message history) and selects the single best action from a structured action space — classify, assign, respond, refund, or escalate — scored by a deterministic grader.
+An LLM-powered autonomous agent that resolves customer support tickets inside a fully OpenEnv-compliant reinforcement learning environment. Each episode is a **3-phase Markov Decision Process** — the agent must triage, route, and resolve tickets through sequential decision-making, with dense intermediate rewards shaping behavior at every step.
 
-Live demo: [HuggingFace Space](https://huggingface.co/spaces/Tarun21W/MetaAI) | Source: [GitHub](https://github.com/AdityaK-labs/Support-Agent/tree/Tarun)
+**Live Demo:** [huggingface.co/spaces/Tarun21W/MetaAI](https://huggingface.co/spaces/Tarun21W/MetaAI) &nbsp;|&nbsp; **Source:** [github.com/AdityaK-labs/Support-Agent](https://github.com/AdityaK-labs/Support-Agent/tree/Tarun)
+
+---
+
+## What Makes This a Real RL Problem
+
+Most LLM-as-agent benchmarks treat each ticket as a single-step classification task — a bandit problem, not reinforcement learning. This environment is different:
+
+- **State evolves between steps.** After Phase 1, the true `issue_type` is revealed in the observation. After Phase 2, the assigned team appears in history. The agent sees a richer state at each step.
+- **Actions have consequences.** A wrong team assignment in Phase 2 directly reduces Phase 3 quality — the agent cannot "undo" routing decisions.
+- **Dense rewards, not sparse.** Every phase provides a reward signal, enabling proper credit assignment across the trajectory.
+- **Partial recovery is possible.** A low-quality Phase 3 response keeps the ticket open so the agent can retry (up to the step limit).
 
 ---
 
 ## Technical Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                        HuggingFace Space (Docker)                   │
-│                                                                     │
-│  ┌──────────────┐     ┌──────────────────────────────────────────┐  │
-│  │  Gradio UI   │────▶│           FastAPI App (app.py)           │  │
-│  │  (port 7860) │     │  /health  /metadata  /schema  /mcp      │  │
-│  └──────────────┘     │  /reset   /step      /state             │  │
-│                       └───────────────┬──────────────────────────┘  │
-│                                       │                             │
-│                       ┌───────────────▼──────────────────────────┐  │
-│                       │          SupportEnv (OpenEnv)            │  │
-│                       │  reset() ─▶ Observation                  │  │
-│                       │  step(Action) ─▶ (obs, reward, done)     │  │
-│                       │  GraderEngine ─▶ proportional score      │  │
-│                       └───────────────┬──────────────────────────┘  │
-│                                       │                             │
-└───────────────────────────────────────┼─────────────────────────────┘
-                                        │
-              ┌─────────────────────────▼──────────────────────────┐
-              │             LiteLLM Proxy (Validator-injected)      │
-              │   API_BASE_URL + HF_TOKEN  ──▶  LLM API call       │
-              │   Model: Qwen/Qwen2.5-72B-Instruct (default)       │
-              └────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│                       HuggingFace Space (Docker)                     │
+│                                                                      │
+│   ┌─────────────────┐      ┌────────────────────────────────────┐   │
+│   │   Gradio UI      │─────▶│        FastAPI (app.py)            │   │
+│   │  3-phase display │      │  /health /metadata /schema /mcp   │   │
+│   └─────────────────┘      │  /reset  /step     /state          │   │
+│                             └───────────────┬────────────────────┘   │
+│                                             │                        │
+│                             ┌───────────────▼────────────────────┐   │
+│                             │        SupportEnv (OpenEnv)        │   │
+│                             │                                    │   │
+│                             │  reset() ──▶ Observation (phase 1) │   │
+│                             │                                    │   │
+│                             │  step(classify)                    │   │
+│                             │    ──▶ reveal issue_type (phase 2) │   │
+│                             │                                    │   │
+│                             │  step(assign + team)               │   │
+│                             │    ──▶ add team context (phase 3)  │   │
+│                             │                                    │   │
+│                             │  step(escalate/refund/respond)     │   │
+│                             │    ──▶ GraderEngine ──▶ reward     │   │
+│                             │    ──▶ done = True                 │   │
+│                             └────────────────────────────────────┘   │
+└──────────────────────────────────────────────────────────────────────┘
 
-inference.py (standalone evaluation):
+inference.py (standalone validator):
   for task in [easy, medium, hard]:
-      reset() ──▶ step loop (max 5) ──▶ [START]/[STEP]/[END] logs
+      reset() → step×3 → [START]/[STEP]/[END] structured logs
 ```
 
 ---
 
-## Environment Design
+## The 3-Phase MDP
 
-### Observation Space
+Every episode — regardless of task difficulty — progresses through exactly three phases:
 
-Each step the agent receives a ticket object with:
+```
+Phase 1: TRIAGE          Phase 2: ROUTE           Phase 3: RESOLVE
+─────────────────        ──────────────────        ─────────────────────
+Agent reads ticket   →   issue_type revealed   →   team context in obs
+Agent classifies         Agent assigns team         Agent resolves ticket
+reward: 0.998/0.002      reward: 0.998/0.4/0.002    reward: 0.002–0.998
+```
 
-| Field        | Type            | Description                                     |
-|-------------|-----------------|------------------------------------------------|
-| `ticket_id`  | string          | Unique ticket identifier (e.g. `TKT-H003`)     |
-| `issue_type` | string          | Category: shipping, billing, technical, etc.    |
-| `sentiment`  | string          | Customer mood: positive / neutral / negative / angry |
-| `priority`   | string          | Urgency: low / medium / high / critical         |
-| `message`    | string          | The raw customer message                        |
-| `history`    | list\[string\]  | Previous actions taken in this episode          |
+### Phase 1 — Triage
+The agent sees a raw ticket with `issue_type: unknown`. Its only job is to recognize that classification is needed:
+```json
+{"action_type": "classify"}
+```
+The environment then reveals the true `issue_type` in the observation for the next step.
 
-### Action Space
+### Phase 2 — Route
+Now knowing the issue type, the agent routes the ticket to the correct specialist team:
+```json
+{"action_type": "assign", "team": "tech_support_team"}
+```
+The assigned team is appended to the observation history, informing the resolution phase.
 
-Actions are submitted as strict JSON objects:
+### Phase 3 — Resolve
+The agent takes the final action based on full context (ticket + revealed issue + routed team):
 
-| Field         | Type   | Required                          | Description                          |
-|--------------|--------|-----------------------------------|--------------------------------------|
-| `action_type` | string | Always                            | One of: classify, assign, respond, refund, escalate |
-| `team`        | string | For assign / escalate             | Target specialist team               |
-| `response`    | string | For respond / refund / escalate   | Customer-facing reply text           |
-
-**Valid teams:**
-
-| Team Name           | Handles                                                   |
-|--------------------|-----------------------------------------------------------|
-| `logistics_team`    | Lost packages, shipping tracking, delivery disputes       |
-| `tech_support_team` | Login issues, password resets, bugs, API errors, data loss|
-| `safety_team`       | Product defects, overheating, recalls, safety hazards     |
-| `finance_team`      | Invoice errors, billing corrections, tax/payment issues   |
-| `orders_team`       | Bulk orders, corporate accounts, order modifications      |
-| `management_team`   | Escalated complaints, refund delays, manager requests     |
+| Action | When to use | Required fields |
+|--------|-------------|-----------------|
+| `escalate` | Customer demands manager, safety hazard, or data emergency | `team` + `response` |
+| `refund` | Product provably wrong/broken and company is at fault | `response` |
+| `respond` | Customer needs information, pricing, or technical details | `response` |
 
 ---
 
-## Task Levels
+## Observation Space
 
-The environment defines three difficulty tiers, each testing a different reasoning capability:
+The agent's view evolves across phases:
 
-### Easy — Classification Only
-The agent must output `{"action_type": "classify"}`. The grader checks only action type correctness. Any other action scores the minimum.
-
-**Scenario examples:** address changes, account category updates, general unknown issues.
-
-### Medium — Team Assignment
-The agent must output `{"action_type": "assign", "team": "<correct_team>"}`. The grader scores both action type (+0.3) and team accuracy (+0.3), normalized to a max of 1.0.
-
-**Scenario examples:**
-- Missing package → `logistics_team`
-- Product overheating → `safety_team`
-- Can't log in → `tech_support_team`
-- Wrong invoice name → `finance_team`
-- Bulk order inquiry → `orders_team`
-
-### Hard — Full Resolution
-The agent must choose between escalate, refund, and respond — selecting the correct action and generating a quality response with specific keyword coverage.
-
-**Scenario examples:**
-- Manager demand + refund delay → `escalate` + `management_team`
-- Wrong product received → `refund`
-- API rate limit question → `respond` with technical details
-- Data loss emergency → `escalate` + `tech_support_team`
+| Field | Type | Phase 1 | Phase 2 | Phase 3 |
+|-------|------|---------|---------|---------|
+| `ticket_id` | string | ✓ | ✓ | ✓ |
+| `issue_type` | string | `"unknown"` | revealed | revealed |
+| `sentiment` | string | ✓ | ✓ | ✓ |
+| `priority` | string | ✓ | ✓ | ✓ |
+| `message` | string | ✓ | ✓ | ✓ |
+| `history` | list | `[]` | classify result | classify + assign |
 
 ---
 
 ## Reward System
 
-The `GraderEngine` applies a normalized proportional scoring model:
+### Phase Rewards
 
-### Score Components
-
+**Phase 1 (Triage):** Binary
 ```
-max_possible = sum of components present in ground truth
-
-Component             Points    Applied when
-─────────────────────────────────────────────────────────
-Correct action_type   +0.30     Always
-Correct team          +0.30     Only if ground truth has a team
-Keyword coverage      +0.40     Only if ground truth has response keywords
-                                (scaled by fraction of keywords matched)
-
-proportional_score = raw_score / max_possible
+classify action  →  0.998
+any other action →  0.002
 ```
 
-### Penalties (applied post-normalization)
-
-| Violation                       | Penalty |
-|--------------------------------|---------|
-| Unnecessary refund              | −0.50   |
-| Unnecessary escalation          | −0.30   |
-| Wrong team assigned             | −0.15   |
-| Each step beyond 3              | −0.10   |
-
-### Final Score Formula
-
-```python
-final_score = clamp(proportional_score - penalties, 0.002, 0.998)
+**Phase 2 (Route):** Graded
+```
+assign + correct team  →  0.998
+assign + wrong team    →  0.400
+not an assign action   →  0.002
 ```
 
-Scores are bounded to `[0.002, 0.998]` — 0.998 is a perfect score ceiling, 0.002 is the floor for failed episodes.
+**Phase 3 (Resolve):** Proportional quality scoring
+```
+Component                      Max     Applied when
+─────────────────────────────────────────────────────
+Correct action type            +0.30   always
+Correct team                   +0.30   if ground truth has a team
+Response keyword coverage      +0.40   scaled by fraction matched
+
+proportional_score = raw / max_possible
+```
+
+**Penalties (Phase 3 only):**
+
+| Violation | Penalty |
+|-----------|---------|
+| Unnecessary refund | −0.50 |
+| Unnecessary escalation | −0.30 |
+| Wrong team assigned | −0.15 |
+| Each step beyond 3 | −0.10 |
+
+**Final episode score:**
+```
+step_score  = clamp(proportional - penalties, 0.002, 0.998)
+episode_score = mean([phase1_reward, phase2_reward, phase3_reward])
+```
 
 ### Score Interpretation
 
-| Score Range  | Interpretation                                       |
-|-------------|------------------------------------------------------|
-| 0.90 – 0.998 | Excellent: correct action + team + full keyword match |
-| 0.60 – 0.89  | Good: correct action + team, partial response         |
-| 0.30 – 0.59  | Partial: correct action type only                     |
-| 0.002 – 0.29 | Poor: wrong action, or unnecessary penalty incurred   |
+| Episode Score | Meaning |
+|--------------|---------|
+| 0.90 – 0.998 | Near-perfect: all 3 phases correct, full keyword coverage |
+| 0.70 – 0.89 | Good: triage/route correct, partial response quality |
+| 0.50 – 0.69 | Partial: triage correct, routing or resolution error |
+| 0.002 – 0.49 | Poor: wrong action type or heavy penalty incurred |
 
 ---
 
-## Benchmark Results
+## Task Levels
 
-Expected agent performance per task level (Qwen2.5-72B-Instruct with task-level instructions):
+Three difficulty tiers vary the complexity of the resolution phase (Phase 3):
 
-| Task    | Expected Score | Notes                                               |
-|--------|---------------|-----------------------------------------------------|
-| Easy   | ~0.95 – 0.998  | classify-only; model follows instruction reliably   |
-| Medium | ~0.70 – 0.90   | team selection accuracy varies by domain keyword    |
-| Hard   | ~0.50 – 0.85   | depends on response keyword coverage and action choice |
+### Easy
+Straightforward tickets with clear intent. The correct Phase 3 action is `respond` (information request) or `refund` (obvious company fault). No escalation needed.
 
-The agent runs up to 5 steps per episode. Episodes typically complete in 1 step for easy/medium tasks, and 1–2 steps for hard tasks.
+**Example scenarios:**
+- Wrong shipping address → respond with update confirmation
+- Double charge on credit card → refund with apology
+- Can't update profile picture → respond with steps
+
+### Medium
+Tickets requiring domain knowledge to route correctly in Phase 2, plus confident Phase 3 resolution.
+
+**Example scenarios:**
+- Missing package (tracking says delivered) → logistics_team → respond
+- Product overheating / fire hazard → safety_team → **escalate** (safety emergency)
+- Password reset link not arriving → tech_support_team → respond
+- Wrong company name on invoice → finance_team → respond
+- Bulk discount inquiry → orders_team → respond
+
+### Hard
+Ambiguous tickets where the agent must distinguish between escalate, refund, and respond — including understanding when manager demands or safety emergencies override normal flow.
+
+**Example scenarios:**
+- 3-week refund delay + manager demand → management_team → escalate
+- Wrong product delivered (red vs blue) → orders_team → refund
+- API 429 rate limit question → tech_support_team → respond with technical detail
+- Data deleted by software bug → tech_support_team → escalate (emergency)
 
 ---
 
-## Agent Strategy
+## Team Directory
 
-The agent uses a two-layer prompt:
+| Team | Handles |
+|------|---------|
+| `logistics_team` | Lost packages, shipping tracking, delivery disputes |
+| `tech_support_team` | Login issues, password resets, bugs, API errors, data loss |
+| `safety_team` | Product defects, overheating, recalls, safety hazards |
+| `finance_team` | Invoice errors, billing corrections, tax/payment issues |
+| `orders_team` | Bulk orders, corporate accounts, returns, subscriptions |
+| `management_team` | Escalated complaints, refund delays, manager requests |
 
-1. **System prompt** — full SOP with action rules and penalty warnings
-2. **User prompt** — task-level instruction injected per difficulty tier, current ticket JSON, recent history
+---
 
-Task-level instructions override the general SOP to prevent cross-task confusion (e.g., preventing `assign` on easy tasks or `classify` on hard tasks).
+## Benchmark Performance
 
-A fallback policy activates when the LLM call fails or returns unparseable JSON, ensuring the episode always completes without crashing.
+Expected agent performance using `Qwen/Qwen2.5-72B-Instruct` with phase-aware prompting:
+
+| Task | Phase 1 | Phase 2 | Phase 3 | Avg Episode Score |
+|------|---------|---------|---------|-------------------|
+| Easy | ~0.998 | ~0.90 | ~0.70 | ~0.87 |
+| Medium | ~0.998 | ~0.85 | ~0.65 | ~0.83 |
+| Hard | ~0.998 | ~0.80 | ~0.60 | ~0.80 |
+
+Phase 1 is near-perfect because the instruction is unambiguous. Phase 2 depends on domain keyword matching. Phase 3 is the hardest — response quality and action selection under ambiguity determine the final score.
+
+---
+
+## Agent Design
+
+The agent uses a layered prompt strategy:
+
+**System prompt** — defines the 3-phase structure, all action rules, and penalty warnings.
+
+**Per-step user prompt** — includes the current phase instruction, live ticket JSON, and the last 6 history entries:
+
+```
+CURRENT PHASE: 2 — ROUTE
+The issue type is now known (see history). Assign to the correct team.
+Output: {"action_type": "assign", "team": "<team_name>"}
+
+Ticket: {
+  "ticket_id": "TKT-M003",
+  "issue_type": "technical",       ← revealed by Phase 1
+  ...
+}
+History:
+  [Phase 1/triage] Agent: classify
+  System: Issue classified as 'technical'. Proceed to route the ticket.
+```
+
+**Fallback policy** — if the LLM call fails or returns unparseable JSON, a phase-appropriate deterministic fallback activates so the episode always completes.
 
 ---
 
 ## API Reference
 
-All endpoints available at the Space URL:
-
-| Method | Path         | Description                                      |
-|-------|-------------|--------------------------------------------------|
-| GET   | `/health`    | Returns `{"status": "healthy"}`                  |
-| GET   | `/metadata`  | Environment name, description, tasks list        |
-| GET   | `/schema`    | JSON schema for action/observation/state objects |
-| POST  | `/mcp`       | MCP-compatible tool manifest                     |
-| GET   | `/state`     | Current environment state                        |
-| POST  | `/reset`     | Reset episode; accepts `?task_name=easy/medium/hard` |
-| POST  | `/step`      | Submit an action; body: `ActionRequest` JSON     |
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/health` | Returns `{"status": "healthy"}` |
+| GET | `/metadata` | Environment name, description, supported tasks |
+| GET | `/schema` | JSON schema for action / observation / state |
+| POST | `/mcp` | MCP-compatible tool manifest |
+| GET | `/state` | Current environment state (phase, step count, history) |
+| POST | `/reset?task_name=easy` | Start a new episode |
+| POST | `/step` | Submit an action; body: `{"action_type": "...", "team": "...", "response": "..."}` |
 
 ---
 
@@ -213,24 +275,24 @@ All endpoints available at the Space URL:
 
 ```
 meta/
-├── app.py                   # FastAPI + Gradio UI (root entry point)
-├── inference.py             # Standalone evaluation script (runs all 3 tasks)
-├── openenv.yaml             # OpenEnv spec: tasks, graders, reward range
-├── pyproject.toml           # Package config + openenv-core dependency
-├── requirements.txt         # Runtime dependencies
-├── Dockerfile               # HF Spaces Docker build
+├── app.py                      # FastAPI + Gradio UI (root entry point)
+├── inference.py                # Standalone evaluation (runs all 3 tasks)
+├── openenv.yaml                # OpenEnv spec: tasks, graders, reward range [0.002, 0.998]
+├── pyproject.toml              # Package config + openenv-core dependency
+├── requirements.txt            # Runtime dependencies
+├── Dockerfile                  # HuggingFace Spaces build
 ├── server/
-│   └── app.py               # Mirror of app.py (required by openenv validate)
-├── openenv/
-│   ├── env.py               # SupportEnv: reset/step/state logic
-│   ├── models.py            # Pydantic models: Action, Observation, Reward, etc.
-│   ├── graders/
-│   │   └── grader.py        # GraderEngine: deterministic scoring
-│   └── tasks/
-│       ├── easy.py          # 5 easy ticket scenarios
-│       ├── medium.py        # 5 medium ticket scenarios
-│       └── hard.py          # 5 hard ticket scenarios
-└── support_env.py           # SupportEnvWrapper for inference.py (Docker-based)
+│   └── app.py                  # Mirror of app.py (required by openenv validate)
+└── openenv/
+    ├── env.py                  # SupportEnv: 3-phase MDP logic
+    ├── models.py               # Pydantic models: Action, Observation, Reward, etc.
+    ├── reward.py               # Dispatch to GraderEngine with phase context
+    ├── graders/
+    │   └── grader.py           # GraderEngine: phase-aware + proportional scoring
+    └── tasks/
+        ├── easy.py             # 5 easy ticket scenarios (3-phase)
+        ├── medium.py           # 5 medium ticket scenarios (3-phase)
+        └── hard.py             # 5 hard ticket scenarios (3-phase)
 ```
 
 ---
@@ -243,23 +305,29 @@ meta/
 # Install dependencies
 pip install -r requirements.txt
 
-# Set environment variables
-export API_BASE_URL=https://your-llm-proxy-url/v1
+# Configure environment
+export API_BASE_URL=https://your-llm-proxy/v1
 export HF_TOKEN=your_token_here
 
-# Run the UI
+# Launch UI + API
 python app.py
 # → http://localhost:7860
 ```
 
-### Run Inference Script
+### Run Inference (All 3 Tasks)
 
 ```bash
 python inference.py
-# Runs all 3 tasks and emits structured logs:
-# [START] task=easy env=support_env model=Qwen/Qwen2.5-72B-Instruct
-# [STEP] step=1 action={"action_type":"classify"} reward=1.00 done=true error=null
-# [END] success=true steps=1 score=0.998 rewards=1.00
+```
+
+Output format:
+```
+[INFO] Using API_BASE_URL=https://... MODEL_NAME=Qwen/Qwen2.5-72B-Instruct
+[START] task=easy env=support_env model=Qwen/Qwen2.5-72B-Instruct
+[STEP] step=1 action={"action_type":"classify"} reward=1.00 done=false error=null
+[STEP] step=2 action={"action_type":"assign","team":"orders_team"} reward=1.00 done=false error=null
+[STEP] step=3 action={"action_type":"respond","response":"..."} reward=0.87 done=true error=null
+[END] success=true steps=3 score=0.957 rewards=1.00,1.00,0.87
 ```
 
 ### Docker Build
@@ -272,41 +340,46 @@ docker run -p 7860:7860 \
   openenv-support-agent
 ```
 
-### HuggingFace Spaces Deployment
+### HuggingFace Spaces
 
-1. Push to the Space's git remote
-2. Set secrets in **Settings → Repository secrets**: `API_BASE_URL`, `HF_TOKEN`
-3. The Space builds automatically from `Dockerfile`
+Push to the Space's git remote. Set secrets in **Settings → Repository secrets**:
+- `API_BASE_URL` — LLM proxy base URL
+- `HF_TOKEN` — your HuggingFace token
+
+The Space builds automatically from `Dockerfile` and binds to port `7860`.
 
 ---
 
 ## Environment Variables
 
-| Variable       | Required | Description                                              |
-|---------------|----------|----------------------------------------------------------|
-| `API_BASE_URL` | Yes      | Base URL of the OpenAI-compatible LLM proxy              |
-| `HF_TOKEN`     | Yes      | HuggingFace token (primary credential for LLM proxy)     |
-| `API_KEY`      | Fallback  | Alternative API key if `HF_TOKEN` is not set            |
-| `MODEL_NAME`   | No       | LLM model name (default: `Qwen/Qwen2.5-72B-Instruct`)   |
-| `PORT`         | No       | Server port (default: `7860`)                            |
-
----
-
-## Roadmap
-
-- **RL fine-tuning**: Use episode trajectories to fine-tune a smaller model (e.g. Qwen2.5-7B) via PPO/GRPO on the GraderEngine reward signal
-- **Multi-turn episodes**: Extend action space to allow follow-up questions before resolution
-- **Ticket generator**: Procedurally generate tickets with controllable difficulty and domain distribution
-- **Confidence calibration**: Add a confidence field to actions; penalize low-confidence wrong answers more heavily
-- **Leaderboard**: Track model performance across runs with per-task score history
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `API_BASE_URL` | Yes | Base URL of the OpenAI-compatible LLM proxy |
+| `HF_TOKEN` | Yes | Primary credential for the LLM proxy |
+| `API_KEY` | Fallback | Used if `HF_TOKEN` is not set |
+| `MODEL_NAME` | No | LLM model name (default: `Qwen/Qwen2.5-72B-Instruct`) |
+| `PORT` | No | Server port (default: `7860`) |
 
 ---
 
 ## Reward Design Philosophy
 
-The reward function mirrors real-world BPO business objectives:
+The reward function is built around four real-world BPO principles:
 
-- **Dense feedback** — every step returns an interpretable score with per-component breakdown
-- **Deterministic** — same ticket + action always yields the same score; no randomness
-- **Proportional normalization** — easy tasks (classify only) can achieve 1.0 without being penalized for missing team/response components that were never required
-- **Penalty asymmetry** — refund mistakes (−0.50) cost more than escalation mistakes (−0.30) reflecting real business cost; wrong team routing (−0.15) is a softer penalty since it still shows intent
+**1. Dense feedback** — every step returns an interpretable score. Agents are never left guessing what went wrong across a long episode.
+
+**2. Proportional normalization** — scores are normalized by what the scenario actually tests. An easy ticket that only needs `classify` can still achieve `0.998` without being penalized for omitting a team or response that was never required.
+
+**3. Asymmetric penalties** — refund mistakes (`−0.50`) cost more than escalation mistakes (`−0.30`), which cost more than wrong team (`−0.15`). This mirrors actual business cost: an unwarranted refund is an immediate financial loss; an unnecessary escalation wastes time; a routing error is recoverable.
+
+**4. Deterministic scoring** — the same action on the same ticket always produces the same reward. No stochasticity in the grader, making it suitable for reproducible RL training and evaluation.
+
+---
+
+## Roadmap
+
+- **RL fine-tuning**: Collect episode trajectories and use PPO/GRPO to fine-tune Qwen2.5-7B directly on the GraderEngine reward signal
+- **Multi-turn Phase 3**: Allow the agent to ask clarifying questions before resolving — rewarding efficient resolution over blind action
+- **Procedural ticket generator**: Generate tickets with controllable sentiment, domain, and ambiguity for richer training distributions
+- **Confidence-gated routing**: Add a `confidence` field; low-confidence phase-3 actions trigger human review before closing the ticket
+- **Cross-model leaderboard**: Compare Qwen, LLaMA, Mistral, and GPT families on the same task distribution with per-phase score breakdown
