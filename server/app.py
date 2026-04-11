@@ -236,6 +236,15 @@ TASK_MAP = {
     "Hard (Full Resolution)": "hard",
 }
 
+TEAM_DESCRIPTIONS = {
+    "logistics_team":    "Logistics Team — Lost packages, shipping tracking, delivery disputes",
+    "tech_support_team": "Tech Support Team — Login issues, password resets, software bugs, API errors, data loss",
+    "safety_team":       "Safety Team — Product defects, overheating, recalls, safety hazards",
+    "finance_team":      "Finance Team — Invoice errors, billing corrections, tax/payment issues",
+    "orders_team":       "Orders Team — Bulk orders, corporate accounts, order modifications",
+    "management_team":   "Management Team — Escalated complaints, refund delays, manager requests",
+}
+
 _agent_history: List[str] = []   # per-episode history for the agent
 
 
@@ -251,6 +260,7 @@ def ui_reset(task_choice: str):
         "",                 # action info box
         "",                 # reward box
         "",                 # history box
+        "",                 # team assignment box
     )
 
 
@@ -265,11 +275,13 @@ async def ui_auto_step():
             "Episode finished — please reset.",
             "",
             _fmt_history(),
+            "",
         )
 
     all_steps = []       # list of per-step summaries
     all_rewards = []
     last_message = ""
+    team_lines = []
 
     MAX_UI_STEPS = 5
 
@@ -302,6 +314,11 @@ async def ui_auto_step():
             step_line += f"  [error: {error_msg}]"
         all_steps.append(step_line)
 
+        if action.team:
+            desc = TEAM_DESCRIPTIONS.get(action.team, action.team)
+            ticket_id = obs.ticket_id if hasattr(obs, "ticket_id") else "?"
+            team_lines.append(f"[{ticket_id}]  {desc}")
+
         if action.response:
             last_message = action.response
 
@@ -317,6 +334,7 @@ async def ui_auto_step():
         f"Done:        {env.done}"
     )
     agent_message = last_message or "(no customer-facing message — classify/assign task)"
+    team_text = "\n".join(team_lines) if team_lines else "(no team assigned — classify or respond action)"
 
     return (
         env.get_current_observation().model_dump_json(indent=2),
@@ -324,6 +342,7 @@ async def ui_auto_step():
         act_summary,
         reward_text,
         _fmt_history(),
+        team_text,
     )
 
 
@@ -338,6 +357,7 @@ def ui_manual_step(a_type: str, t_name: str, resp_text: str):
             "Episode finished — please reset.",
             "",
             _fmt_history(),
+            "",
         )
 
     try:
@@ -364,12 +384,18 @@ def ui_manual_step(a_type: str, t_name: str, resp_text: str):
 
         _agent_history = env.history.copy()
 
+        team_text = ""
+        if t_name:
+            desc = TEAM_DESCRIPTIONS.get(t_name, t_name)
+            team_text = f"Assigned to: {desc}"
+
         return (
             result.observation.model_dump_json(indent=2),
             agent_message,
             act_summary,
             reward_text,
             _fmt_history(),
+            team_text,
         )
 
     except Exception as exc:
@@ -379,6 +405,7 @@ def ui_manual_step(a_type: str, t_name: str, resp_text: str):
             f"Error: {exc}",
             "",
             _fmt_history(),
+            "",
         )
 
 
@@ -436,6 +463,12 @@ with gr.Blocks(title="OpenEnv Support Agent", theme=gr.themes.Soft()) as demo:
                 lines=3,
                 interactive=False,
             )
+            team_box = gr.Textbox(
+                label="Team Assignment",
+                lines=3,
+                interactive=False,
+                placeholder="Assigned team will appear here when agent routes the ticket...",
+            )
             reward_box = gr.Textbox(
                 label="Score & Feedback",
                 lines=4,
@@ -454,7 +487,7 @@ with gr.Blocks(title="OpenEnv Support Agent", theme=gr.themes.Soft()) as demo:
                 manual_btn = gr.Button("Step with Manual Action")
 
     # ── Wire up events ────────────────────────────────────────────────────────
-    _outputs = [obs_box, msg_box, act_box, reward_box, hist_box]
+    _outputs = [obs_box, msg_box, act_box, reward_box, hist_box, team_box]
 
     reset_btn.click(ui_reset,       inputs=[task_dd],                              outputs=_outputs)
     auto_btn.click( ui_auto_step,   inputs=[],                                     outputs=_outputs)
