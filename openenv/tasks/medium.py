@@ -76,5 +76,82 @@ MEDIUM_TASKS = [
             action_type="respond",
             response_keywords=["bulk", "discount", "corporate", "units"],
         )
-    )
+    ),
+    TicketScenario(
+        ticket=Observation(
+            ticket_id="TKT-M006",
+            issue_type="unknown",
+            sentiment="neutral",
+            priority="medium",
+            message="Does your store ship internationally? I'm in Germany and want to know about shipping costs and delivery times.",
+        ),
+        ground_truth=GroundTruth(
+            issue_type="shipping",
+            team="logistics_team",
+            action_type="respond",
+            response_keywords=["international", "shipping", "Germany", "delivery"],
+        )
+    ),
+    TicketScenario(
+        ticket=Observation(
+            ticket_id="TKT-M007",
+            issue_type="unknown",
+            sentiment="negative",
+            priority="medium",
+            message="My data in the app isn't syncing between my phone and computer. I'm losing work.",
+        ),
+        ground_truth=GroundTruth(
+            issue_type="technical",
+            team="tech_support_team",
+            action_type="respond",
+            response_keywords=["sync", "data", "device", "troubleshoot"],
+        )
+    ),
+    TicketScenario(
+        ticket=Observation(
+            ticket_id="TKT-M008",
+            issue_type="unknown",
+            sentiment="negative",
+            priority="high",
+            message="I used a coupon code at checkout but was still charged the full price. This is a billing error.",
+        ),
+        ground_truth=GroundTruth(
+            issue_type="billing",
+            team="finance_team",
+            action_type="refund",
+            response_keywords=["coupon", "discount", "refund", "apologize"],
+            requires_refund=True,
+        )
+    ),
+    TicketScenario(
+        ticket=Observation(
+            ticket_id="TKT-M009",
+            issue_type="unknown",
+            sentiment="positive",
+            priority="medium",
+            message="Our company is growing fast. Can we upgrade to the Business plan and add 15 more user seats?",
+        ),
+        ground_truth=GroundTruth(
+            issue_type="orders",
+            team="orders_team",
+            action_type="respond",
+            response_keywords=["business plan", "upgrade", "seats", "users"],
+        )
+    ),
+    TicketScenario(
+        ticket=Observation(
+            ticket_id="TKT-M010",
+            issue_type="unknown",
+            sentiment="angry",
+            priority="critical",
+            message="I just saw a news report that your product model XZ-400 has been recalled. I own one. What should I do?",
+        ),
+        ground_truth=GroundTruth(
+            issue_type="safety",
+            team="safety_team",
+            action_type="escalate",
+            response_keywords=["recall", "safety", "XZ-400", "immediately"],
+            requires_escalation=True,
+        )
+    ),
 ]

@@ -26,15 +26,27 @@ class GraderEngine:
         A perfect 3-step episode averages to ~0.998.
         """
         if phase == 1:
-            if action.action_type == "classify":
-                return Reward(
-                    score=0.998,
-                    feedback="[+] Phase 1 (Triage): Correct classify action | +0.998"
-                )
-            else:
+            if action.action_type != "classify":
                 return Reward(
                     score=0.002,
                     feedback=f"[-] Phase 1 (Triage): Expected classify, got '{action.action_type}' | 0.002"
+                )
+            # Bonus for correctly identifying the issue_type in the response field
+            if action.response and ground_truth.issue_type:
+                if ground_truth.issue_type.lower() in action.response.lower():
+                    return Reward(
+                        score=0.998,
+                        feedback=f"[+] Phase 1 (Triage): classify + correct issue_type '{ground_truth.issue_type}' | +0.998"
+                    )
+                else:
+                    return Reward(
+                        score=0.55,
+                        feedback=f"[-] Phase 1 (Triage): classify only, issue_type not identified in response | 0.55"
+                    )
+            else:
+                return Reward(
+                    score=0.55,
+                    feedback="[~] Phase 1 (Triage): classify only (no issue_type in response) | 0.55"
                 )
 
         elif phase == 2:

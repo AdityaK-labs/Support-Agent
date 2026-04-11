@@ -84,8 +84,10 @@ def log_end(success: bool, steps: int, score: float, rewards: List[float]) -> No
 PHASE_PROMPTS = {
     1: (
         "CURRENT PHASE: 1 — TRIAGE\n"
-        "Your task: Classify this ticket.\n"
-        "Output exactly: {\"action_type\": \"classify\"}"
+        "Read the customer message carefully and classify the ticket.\n"
+        "Identify the issue type and include it in the response field.\n"
+        "Issue types: shipping, billing, technical, returns, safety, cancellation, complaint, orders, sales\n"
+        "Output: {\"action_type\": \"classify\", \"response\": \"<issue_type>\"}"
     ),
     2: (
         "CURRENT PHASE: 2 — ROUTE\n"

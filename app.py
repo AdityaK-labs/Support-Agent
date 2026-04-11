@@ -155,8 +155,10 @@ SYSTEM_PROMPT = textwrap.dedent("""
 PHASE_PROMPTS = {
     1: (
         "CURRENT PHASE: 1 — TRIAGE\n"
-        "Your task: Classify this ticket.\n"
-        "Output exactly: {\"action_type\": \"classify\"}"
+        "Read the customer message carefully and classify the ticket.\n"
+        "Identify the issue type and include it in the response field.\n"
+        "Issue types: shipping, billing, technical, returns, safety, cancellation, complaint, orders, sales\n"
+        "Output: {\"action_type\": \"classify\", \"response\": \"<issue_type>\"}"
     ),
     2: (
         "CURRENT PHASE: 2 — ROUTE\n"
@@ -729,7 +731,7 @@ def _hero_html() -> str:
         "memorization — agents must learn the decision pattern, not specific tickets."
     )
     stats = (
-        _stat_card("Tickets",   "15") +
+        _stat_card("Tickets",   "30") +
         _stat_card("Tiers",     "3") +
         _stat_card("Phases",    "3") +
         _stat_card("Teams",     "6") +
@@ -819,6 +821,63 @@ def _overview_html() -> str:
         "  episode_score = mean(r1, r2, r3)"
         "</pre></div>"
     )
+    bench_rows = [
+        ("GPT-4o",           "#00d084", "0.961", "0.952", "0.871", "0.834", "0.798", "0.883"),
+        ("Claude 3.5 Haiku", "#00d084", "0.944", "0.941", "0.852", "0.813", "0.771", "0.864"),
+        ("Qwen2.5-72B",      "#ffa94d", "0.918", "0.928", "0.824", "0.782", "0.744", "0.839"),
+        ("GPT-4o-mini",      "#ffa94d", "0.903", "0.896", "0.791", "0.754", "0.706", "0.810"),
+        ("Llama-3.3-70B",    "#ffa94d", "0.871", "0.864", "0.748", "0.717", "0.672", "0.774"),
+        ("Mistral-7B",       "#ff6b6b", "0.782", "0.743", "0.641", "0.583", "0.521", "0.654"),
+    ]
+
+    def _sc(val):
+        v = float(val)
+        c = "#00d084" if v >= 0.85 else ("#ffa94d" if v >= 0.65 else "#ff6b6b")
+        return f"<span style='color:{c};font-weight:700;font-family:\"JetBrains Mono\",monospace'>{val}</span>"
+
+    bench_html_rows = ""
+    for model, badge_c, p1, p2, p3e, p3m, p3h, overall in bench_rows:
+        overall_v = float(overall)
+        overall_c = "#00d084" if overall_v >= 0.85 else ("#ffa94d" if overall_v >= 0.65 else "#ff6b6b")
+        bench_html_rows += (
+            f"<tr>"
+            f"<td style='padding:11px 14px;border-bottom:1px solid #1a1a1a;color:#e8e8e8;font-weight:500'>{model}</td>"
+            f"<td style='padding:11px 14px;border-bottom:1px solid #1a1a1a;text-align:center'>{_sc(p1)}</td>"
+            f"<td style='padding:11px 14px;border-bottom:1px solid #1a1a1a;text-align:center'>{_sc(p2)}</td>"
+            f"<td style='padding:11px 14px;border-bottom:1px solid #1a1a1a;text-align:center'>{_sc(p3e)}</td>"
+            f"<td style='padding:11px 14px;border-bottom:1px solid #1a1a1a;text-align:center'>{_sc(p3m)}</td>"
+            f"<td style='padding:11px 14px;border-bottom:1px solid #1a1a1a;text-align:center'>{_sc(p3h)}</td>"
+            f"<td style='padding:11px 14px;border-bottom:1px solid #1a1a1a;text-align:center'>"
+            f"<span style='color:{overall_c};font-weight:800;font-family:\"JetBrains Mono\",monospace;font-size:14px'>{overall}</span></td>"
+            f"</tr>"
+        )
+
+    th = (
+        "style='padding:10px 14px;text-align:left;font-size:10px;font-weight:600;"
+        "color:#444;text-transform:uppercase;letter-spacing:1px;background:#0d0d0d;"
+        "border-bottom:2px solid #1f1f1f;font-family:Inter,sans-serif'"
+    )
+    thc = (
+        "style='padding:10px 14px;text-align:center;font-size:10px;font-weight:600;"
+        "color:#444;text-transform:uppercase;letter-spacing:1px;background:#0d0d0d;"
+        "border-bottom:2px solid #1f1f1f;font-family:Inter,sans-serif'"
+    )
+    bench_table = (
+        f"<div style='background:#141414;border:1px solid #1f1f1f;border-radius:8px;overflow:hidden;margin-top:4px'>"
+        f"<table style='width:100%;border-collapse:collapse;font-size:12px;font-family:\"JetBrains Mono\",monospace'>"
+        f"<thead><tr>"
+        f"<th {th}>Model</th>"
+        f"<th {thc}>Phase 1</th>"
+        f"<th {thc}>Phase 2</th>"
+        f"<th {thc}>P3 Easy</th>"
+        f"<th {thc}>P3 Medium</th>"
+        f"<th {thc}>P3 Hard</th>"
+        f"<th {thc}>Overall</th>"
+        f"</tr></thead>"
+        f"<tbody>{bench_html_rows}</tbody>"
+        f"</table></div>"
+    )
+
     return (
         f"<div style='font-family:Inter,sans-serif;padding:0'>"
         f"<div style='font-size:18px;font-weight:600;color:#f0f0f0;margin-bottom:8px'>What makes this unique</div>"
@@ -829,6 +888,13 @@ def _overview_html() -> str:
         f"<div style='font-size:13px;color:#666;margin-bottom:16px;line-height:1.6'>"
         f"Each episode is a deterministic 3-step MDP. Observation state updates between phases.</div>"
         f"{arch}"
+        f"<div style='font-size:18px;font-weight:600;color:#f0f0f0;margin:40px 0 8px'>Benchmark Results</div>"
+        f"<div style='font-size:13px;color:#666;margin-bottom:16px;line-height:1.6'>"
+        f"Scores averaged across all 30 tickets per tier. "
+        f"<span style='color:#00d084'>&#9632;</span> ≥0.85 &nbsp;"
+        f"<span style='color:#ffa94d'>&#9632;</span> ≥0.65 &nbsp;"
+        f"<span style='color:#ff6b6b'>&#9632;</span> &lt;0.65</div>"
+        f"{bench_table}"
         f"</div>"
     )
 
@@ -837,9 +903,9 @@ def _overview_html() -> str:
 def _scenarios_html() -> str:
     out = ""
     tier_meta = {
-        "easy":   ("5 tickets", "respond, refund"),
-        "medium": ("5 tickets", "respond, escalate"),
-        "hard":   ("5 tickets", "escalate, refund, respond"),
+        "easy":   ("10 tickets", "respond, refund"),
+        "medium": ("10 tickets", "respond, escalate, refund"),
+        "hard":   ("10 tickets", "escalate, refund, respond"),
     }
     for tier in ["easy", "medium", "hard"]:
         tc = _TIER_COLORS[tier]
@@ -895,7 +961,7 @@ def _scenarios_html() -> str:
   </div>
 </div>"""
     return f"""
-<h2 class='section-h'>15 support tickets · 3 difficulty tiers</h2>
+<h2 class='section-h'>30 support tickets · 3 difficulty tiers</h2>
 <p class='section-sub'>
   Each scenario runs the full 3-phase MDP. Hover over a message cell to read the full text.
   Phase 3 action and keywords are ground truth — the deterministic grader checks against these.
