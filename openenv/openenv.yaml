@@ -1,0 +1,107 @@
+environment:
+  name: customer-support-agent
+  version: "2.0.0"
+  description: >
+    OpenEnv-compliant autonomous customer support environment.
+    Each episode is a 3-phase Markov Decision Process: Triage -> Route -> Resolve.
+    An AI agent classifies, assigns, and resolves realistic BPO/customer-support
+    tickets across e-commerce and SaaS workflows.
+    Deterministic per-phase reward shaping; observation state evolves each step.
+  tags:
+    - openenv
+    - customer-support
+    - reinforcement-learning
+    - multi-step
+    - bpo
+
+tasks:
+  - name: easy
+    description: >
+      3-phase MDP with straightforward tickets. Phase 1: classify issue type.
+      Phase 2: route to correct team. Phase 3: respond or refund.
+    difficulty: easy
+    max_steps: 5
+    num_scenarios: 10
+
+  - name: medium
+    description: >
+      3-phase MDP with moderate complexity. Phase 1: classify. Phase 2: route.
+      Phase 3: respond, refund, or escalate safety/product defect issues.
+    difficulty: medium
+    max_steps: 5
+    num_scenarios: 10
+
+  - name: hard
+    description: >
+      3-phase MDP with ambiguous, high-stakes tickets. Requires distinguishing
+      escalate vs refund vs respond with asymmetric business penalties.
+    difficulty: hard
+    max_steps: 5
+    num_scenarios: 10
+
+observation_space:
+  type: object
+  fields:
+    ticket_id:
+      type: string
+      description: "Unique ticket identifier (e.g. TKT-E001)"
+    issue_type:
+      type: string
+      description: "Category of the customer issue. 'unknown' in Phase 1; revealed after classify."
+      enum: [unknown, shipping, billing, technical, returns, safety, cancellation, complaint, orders, sales]
+    sentiment:
+      type: string
+      description: "Detected customer sentiment"
+      enum: [positive, neutral, negative, angry]
+    priority:
+      type: string
+      description: "Ticket urgency level"
+      enum: [low, medium, high, critical]
+    message:
+      type: string
+      description: "The customer's original message text"
+    history:
+      type: array
+      items:
+        type: string
+      description: "Phase transition messages and prior agent actions in this episode"
+
+action_space:
+  type: object
+  fields:
+    action_type:
+      type: string
+      description: "Primary action to execute"
+      enum: [classify, assign, respond, refund, escalate]
+    team:
+      type: string
+      nullable: true
+      description: "Target team (used with assign/escalate actions)"
+      enum: [logistics_team, tech_support_team, safety_team, finance_team, orders_team, management_team]
+    response:
+      type: string
+      nullable: true
+      description: >
+        In Phase 1: the identified issue_type (e.g. 'billing').
+        In Phase 3: customer-facing response message.
+
+reward:
+  range: [0.002, 0.998]
+  phases:
+    phase_1_triage:
+      classify_with_correct_issue_type: 0.998
+      classify_only: 0.55
+      wrong_action: 0.002
+    phase_2_route:
+      correct_team: 0.998
+      wrong_team: 0.400
+      wrong_action: 0.002
+    phase_3_resolve:
+      description: "Proportional quality score: action_type (0.3) + team (0.3) + keyword coverage (0.4)"
+      range: [0.002, 0.998]
+  penalties:
+    unnecessary_refund: -0.50
+    unnecessary_escalation: -0.30
+    wrong_team: -0.15
+    excessive_steps: -0.10 per step beyond 3
+  episode_score: "mean(phase_1_reward, phase_2_reward, phase_3_reward) clamped to [0.002, 0.998]"
