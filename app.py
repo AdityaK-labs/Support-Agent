@@ -765,12 +765,19 @@ def _hero_html() -> str:
         _stat_card("Reward",    "[0.002,&nbsp;0.998]", small=True)
     )
     return (
-        f"<div class='hero-section' style='background:#141414;border-bottom:1px solid #1f1f1f;"
+        f"<style>"
+        f"@media(max-width:900px){{.hs{{padding:24px 16px 20px!important;}}"
+        f".sg{{grid-template-columns:repeat(3,1fr)!important;}}}}"
+        f"@media(max-width:520px){{.hs{{padding:16px 12px 14px!important;}}"
+        f".sg{{grid-template-columns:repeat(2,1fr)!important;}}"
+        f".hs-title{{font-size:20px!important;}}}}"
+        f"</style>"
+        f"<div class='hs' style='background:#141414;border-bottom:1px solid #1f1f1f;"
         f"padding:32px 32px 28px;font-family:Inter,sans-serif'>"
-        f"<div style='font-size:26px;font-weight:700;color:#f0f0f0;line-height:1.2;"
+        f"<div class='hs-title' style='font-size:26px;font-weight:700;color:#f0f0f0;line-height:1.2;"
         f"margin-bottom:10px;letter-spacing:-.3px'>Customer Support Agent</div>"
         f"<div style='font-size:13px;color:#666;line-height:1.75;max-width:860px'>{desc}</div>"
-        f"<div class='stat-grid-resp' style='display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin-top:24px'>"
+        f"<div class='sg' style='display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin-top:24px'>"
         f"{stats}"
         f"</div></div>"
     )
@@ -823,7 +830,8 @@ def _overview_html() -> str:
          "contaminating the reward signal across runs."),
     ]
     grid = (
-        f"<div class='unique-grid-resp' style='display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));"
+        f"<style>@media(max-width:600px){{.ug{{grid-template-columns:1fr!important;}}}}</style>"
+        f"<div class='ug' style='display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));"
         f"gap:14px;margin-top:4px'>"
         + "".join(_unique_card(icon, title, body) for icon, title, body in cards)
         + "</div>"
@@ -1102,71 +1110,128 @@ def _scenarios_html() -> str:
 
 def _try_it_html() -> str:
     m = _esc(MODEL_NAME)
-    return f"""
-<h2 class='section-h'>Run the baseline yourself</h2>
-<p class='section-sub'>
-  The validator runs <code style='color:#9ca3af;font-size:12px'>inference.py</code> and parses structured stdout logs.
-  Set the two required env vars and run:
-</p>
-<div class='code-block'><pre>export API_BASE_URL=https://your-llm-proxy/v1
-export HF_TOKEN=your_token_here
-export MODEL_NAME={m}        # optional
+    cb = (
+        "background:#0d1117;border:1px solid #21262d;border-radius:8px;"
+        "overflow-x:auto;margin:16px 0"
+    )
+    pre = (
+        "padding:18px 20px;font-family:'JetBrains Mono',monospace;font-size:12px;"
+        "color:#8b949e;line-height:1.75;white-space:pre;margin:0;display:block"
+    )
+    h = "font-size:18px;font-weight:600;color:#f0f0f0;margin:0 0 8px"
+    sub = "font-size:13px;color:#666;margin-bottom:20px;line-height:1.6"
 
-python inference.py</pre></div>
+    setup_code = (
+        f"export API_BASE_URL=https://your-llm-proxy/v1\n"
+        f"export HF_TOKEN=your_token_here\n"
+        f"export MODEL_NAME={m}   # optional\n\n"
+        f"python inference.py"
+    )
+    log_code = (
+        f"[INFO] Using API_BASE_URL=https://... MODEL_NAME={m}\n\n"
+        f"[START] task=easy  env=support_env  model={m}\n"
+        f'[STEP]  step=1  action={{"action_type":"classify","response":"billing"}}\n'
+        f"        reward=1.00  done=false  error=null\n"
+        f'[STEP]  step=2  action={{"action_type":"assign","team":"finance_team"}}\n'
+        f"        reward=1.00  done=false  error=null\n"
+        f'[STEP]  step=3  action={{"action_type":"refund","response":"We apologize..."}}\n'
+        f"        reward=0.91  done=true   error=null\n"
+        f"[END]   success=true  steps=3  score=0.970  rewards=1.00,1.00,0.91\n\n"
+        f"[START] task=medium ...\n"
+        f"[START] task=hard   ..."
+    )
 
-<h2 class='section-h' style='margin-top:36px'>Expected output</h2>
-<div class='code-block'><pre>[INFO] Using API_BASE_URL=https://... MODEL_NAME={m}
+    def row(cells):
+        return "<tr>" + "".join(
+            f"<td style='padding:11px 14px;border-bottom:1px solid #1a1a1a;"
+            f"font-size:12px;font-family:\"JetBrains Mono\",monospace'>{c}</td>"
+            for c in cells
+        ) + "</tr>"
 
-[START] task=easy   env=support_env model={m}
-[STEP]  step=1  action={{"action_type":"classify"}}                     reward=1.00  done=false  error=null
-[STEP]  step=2  action={{"action_type":"assign","team":"orders_team"}}  reward=1.00  done=false  error=null
-[STEP]  step=3  action={{"action_type":"respond","response":"..."}}     reward=0.87  done=true   error=null
-[END]   success=true  steps=3  score=0.957  rewards=1.00,1.00,0.87
+    G = "#00d084"; A = "#ffa94d"; R = "#ff6b6b"; D = "#555"
+    c = lambda v, col: f"<span style='color:{col};font-weight:700'>{v}</span>"
 
-[START] task=medium  ...
-[START] task=hard    ...</pre></div>
+    reward_rows = (
+        "<tr style='background:#0d0d0d'>"
+        + "".join(
+            f"<th style='padding:10px 14px;font-size:10px;font-weight:600;color:#444;"
+            f"text-transform:uppercase;letter-spacing:1px;border-bottom:2px solid #1f1f1f;"
+            f"font-family:Inter,sans-serif;white-space:nowrap'>{h}</th>"
+            for h in ["Phase", "Correct", "Classify only", "Wrong action", "Wrong team", "Penalties"]
+        )
+        + "</tr>"
+        + row([
+            c("Phase 1 — Triage","#60a5fa"),
+            c("0.998",G)+" <span style='font-size:10px;color:#444'>(classify+issue_type)</span>",
+            c("0.550",A),
+            c("0.002",R),
+            c("n/a",D),
+            c("—",D),
+          ])
+        + row([
+            c("Phase 2 — Route","#ffa94d"),
+            c("0.998",G)+" <span style='font-size:10px;color:#444'>(correct team)</span>",
+            c("n/a",D),
+            c("0.002",R),
+            c("0.400",A),
+            c("—",D),
+          ])
+        + row([
+            c("Phase 3 — Resolve","#00d084"),
+            c("0.002–0.998",G),
+            c("n/a",D),
+            c("0.002",R),
+            c("−0.15",R),
+            f"<span style='color:{R}'>refund −0.50</span><br>"
+            f"<span style='color:{R}'>escalate −0.30</span>",
+          ])
+        + f"<tr style='background:#0a0a0a'>"
+          f"<td style='padding:11px 14px;font-size:12px;color:#666;font-weight:600' colspan='6'>"
+          f"episode_score = mean(r1, r2, r3) &nbsp;·&nbsp; clamped to [0.002, 0.998]</td></tr>"
+    )
 
-<h2 class='section-h' style='margin-top:36px'>Reward breakdown</h2>
-<div class='table-wrap' style='border-radius:8px'>
-<table class='data-table'>
-  <thead>
-    <tr>
-      <th>Phase</th>
-      <th>Correct</th>
-      <th>Wrong action type</th>
-      <th>Wrong team</th>
-      <th>Penalty</th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr>
-      <td><span style='color:#60a5fa;font-weight:600'>Phase 1 — Triage</span></td>
-      <td><span style='color:#00d084;font-weight:700'>0.998</span></td>
-      <td><span style='color:#ff6b6b'>0.002</span></td>
-      <td><span style='color:#555'>n/a</span></td>
-      <td><span style='color:#555'>—</span></td>
-    </tr>
-    <tr>
-      <td><span style='color:#ffa94d;font-weight:600'>Phase 2 — Route</span></td>
-      <td><span style='color:#00d084;font-weight:700'>0.998</span></td>
-      <td><span style='color:#ff6b6b'>0.002</span></td>
-      <td><span style='color:#ffa94d'>0.400</span></td>
-      <td><span style='color:#555'>—</span></td>
-    </tr>
-    <tr>
-      <td><span style='color:#00d084;font-weight:600'>Phase 3 — Resolve</span></td>
-      <td><span style='color:#00d084;font-weight:700'>0.002 – 0.998</span></td>
-      <td><span style='color:#ff6b6b'>0.002</span></td>
-      <td><span style='color:#ff6b6b'>−0.15</span></td>
-      <td><span style='color:#ff6b6b'>refund −0.50 · escalate −0.30</span></td>
-    </tr>
-    <tr style='background:#0d0d0d;font-weight:600'>
-      <td style='color:#888'>Episode Score</td>
-      <td colspan='4' style='color:#888'>mean(phase1, phase2, phase3) · clamped to [0.002, 0.998]</td>
-    </tr>
-  </tbody>
-</table>
-</div>"""
+    return (
+        f"<div style='font-family:Inter,sans-serif'>"
+        f"<div style='{h}'>Run the baseline yourself</div>"
+        f"<p style='{sub}'>The validator runs "
+        f"<code style='color:#9ca3af;font-size:12px;background:#1a1a1a;padding:2px 6px;border-radius:3px'>inference.py</code>"
+        f" and parses structured stdout logs. Set the two required env vars and run:</p>"
+        f"<div style='{cb}'><pre style='{pre}'>{_esc(setup_code)}</pre></div>"
+
+        f"<div style='{h};margin-top:36px'>Expected output</div>"
+        f"<p style='{sub}'>Each run evaluates all 3 tasks. Phase 1 now requires "
+        f"<code style='color:#9ca3af;font-size:12px;background:#1a1a1a;padding:2px 6px;border-radius:3px'>response</code>"
+        f" to contain the identified issue type.</p>"
+        f"<div style='{cb}'><pre style='{pre}'>{_esc(log_code)}</pre></div>"
+
+        f"<div style='{h};margin-top:36px'>Reward breakdown</div>"
+        f"<p style='{sub}'>Phase 1 has three reward levels. Phase 3 uses proportional scoring.</p>"
+        f"<div style='overflow-x:auto'>"
+        f"<table style='width:100%;border-collapse:collapse;min-width:520px;background:#141414;"
+        f"border:1px solid #1f1f1f;border-radius:8px;overflow:hidden'>"
+        f"<thead>{reward_rows[:reward_rows.index('</tr>')+5]}</thead>"
+        f"<tbody>{reward_rows[reward_rows.index('</tr>')+5:]}</tbody>"
+        f"</table></div>"
+
+        f"<div style='{h};margin-top:36px'>Environment variables</div>"
+        f"<div style='overflow-x:auto'>"
+        f"<table style='width:100%;border-collapse:collapse;min-width:400px;background:#141414;"
+        f"border:1px solid #1f1f1f;border-radius:8px;overflow:hidden;margin-top:4px'>"
+        f"<thead><tr style='background:#0d0d0d'>"
+        + "".join(
+            f"<th style='padding:10px 14px;font-size:10px;font-weight:600;color:#444;"
+            f"text-transform:uppercase;letter-spacing:1px;border-bottom:2px solid #1f1f1f;"
+            f"font-family:Inter,sans-serif;white-space:nowrap'>{h}</th>"
+            for h in ["Variable", "Required", "Default", "Description"]
+        )
+        + f"</tr></thead><tbody>"
+        + row([c("API_BASE_URL","#e8e8e8"), c("Yes","#ff6b6b"), c("—","#555"), "OpenAI-compatible LLM proxy base URL"])
+        + row([c("HF_TOKEN","#e8e8e8"), c("Yes","#ff6b6b"), c("—","#555"), "Primary API credential (HuggingFace token)"])
+        + row([c("MODEL_NAME","#e8e8e8"), c("No","#00d084"), f"<span style='color:#666'>Qwen/Qwen2.5-72B-Instruct</span>", "LLM model to evaluate"])
+        + row([c("API_KEY","#e8e8e8"), c("Fallback","#ffa94d"), c("—","#555"), "Used if HF_TOKEN is not set"])
+        + f"</tbody></table></div>"
+        f"</div>"
+    )
 
 # ---------------------------------------------------------------------------
 # Playground HTML renderers
