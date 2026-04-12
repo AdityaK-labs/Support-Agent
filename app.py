@@ -1001,33 +1001,53 @@ def _state_diagram_html() -> str:
               "assign + team",
               "team: <span style='color:#ffa94d'>in history</span><br>phase: 3",
               [("0.998","#00d084"),("0.400","#ffa94d"),("0.002","#ff6b6b")])
-    p3 = node(3, "#00d084", "Resolve",
-              "respond / refund / escalate",
-              "done: <span style='color:#00d084'>True</span><br>or retry if r&lt;0.5",
-              [("0.002–0.998","#00d084")])
+    p3_color = "#00d084"
+    p3_reward_pill = (
+        f"<span style='background:{p3_color}11;color:{p3_color};border:1px solid {p3_color}33;"
+        f"border-radius:3px;padding:1px 6px;font-size:9px;"
+        f"font-family:\"JetBrains Mono\",monospace;font-weight:700'>0.002–0.998</span>"
+    )
+    p3_box = (
+        f"<div style='background:#141414;border:2px solid {p3_color}44;border-radius:10px;"
+        f"padding:14px 12px;box-sizing:border-box'>"
+        f"<div style='font-size:9px;font-weight:700;color:{p3_color};letter-spacing:1.5px;"
+        f"text-transform:uppercase;margin-bottom:6px'>Phase 3</div>"
+        f"<div style='font-size:14px;font-weight:700;color:#f0f0f0;margin-bottom:10px'>Resolve</div>"
+        f"<div style='background:{p3_color}0d;border:1px solid {p3_color}22;border-radius:5px;"
+        f"padding:6px 8px;margin-bottom:10px;font-family:\"JetBrains Mono\",monospace;"
+        f"font-size:10px;color:#aaa'>respond / refund / escalate</div>"
+        f"<div style='font-size:9px;color:#444;text-transform:uppercase;letter-spacing:.8px;margin-bottom:5px'>State after</div>"
+        f"<div style='font-size:10px;font-family:\"JetBrains Mono\",monospace;color:#555;"
+        f"line-height:1.8;margin-bottom:10px'>done: <span style='color:{p3_color}'>True</span><br>"
+        f"or retry if r&lt;0.5</div>"
+        f"<div style='display:flex;gap:3px;flex-wrap:wrap'>{p3_reward_pill}</div>"
+        f"</div>"
+    )
+    p3_loop = (
+        f"<svg viewBox='0 0 100 36' width='72%' height='36' "
+        f"style='display:block;margin:0 auto;overflow:visible'>"
+        f"<defs><marker id='p3-ah' markerWidth='5' markerHeight='5' "
+        f"refX='2' refY='2.5' orient='auto'>"
+        f"<path d='M0,0 L5,2.5 L0,5 Z' fill='{p3_color}99'/>"
+        f"</marker></defs>"
+        f"<path d='M 75 3 C 90 3 90 24 50 24 C 10 24 10 3 25 3' "
+        f"stroke='{p3_color}' stroke-width='1.5' fill='none' stroke-dasharray='4,2' "
+        f"stroke-opacity='0.55' marker-end='url(#p3-ah)'/>"
+        f"<text x='50' y='34' text-anchor='middle' font-size='7.5' "
+        f"fill='{p3_color}' fill-opacity='0.45' font-family='monospace,sans-serif'>"
+        f"retry if score &lt; 0.5</text>"
+        f"</svg>"
+    )
+    p3 = (
+        f"<div class='sd-node' style='flex:1;min-width:150px;display:flex;flex-direction:column'>"
+        f"{p3_box}{p3_loop}"
+        f"</div>"
+    )
 
     a01 = arrow("")
     a12 = arrow("issue_type<br>revealed")
     a23 = arrow("team added<br>to history")
-    a3d = arrow("episode<br>ends")
-
-    retry_loop = (
-        f"<div style='margin:6px 0 18px;padding:10px 14px;background:#1a0a00;"
-        f"border:1px solid #ffa94d33;border-left:3px solid #ffa94d;border-radius:6px;"
-        f"display:flex;align-items:center;gap:10px;flex-wrap:wrap'>"
-        f"<span style='font-size:18px'>&#8635;</span>"
-        f"<div>"
-        f"<span style='font-size:12px;font-weight:600;color:#ffa94d;font-family:Inter,sans-serif'>"
-        f"Phase 3 Retry Loop</span>"
-        f"<span style='font-size:12px;color:#666;font-family:Inter,sans-serif'>"
-        f" &nbsp;— if <code style='color:#9ca3af;background:#1f1f1f;padding:1px 5px;"
-        f"border-radius:3px;font-size:11px'>respond</code> scores &lt; 0.5, the customer "
-        f"replies &ldquo;I&rsquo;m still not satisfied&rdquo; and <code style='color:#ffa94d;"
-        f"background:#1f1f1f;padding:1px 5px;border-radius:3px;font-size:11px'>phase stays at 3"
-        f"</code>. The agent retries until score &ge; 0.5 or the 5-step hard cap is hit."
-        f"</span>"
-        f"</div></div>"
-    )
+    a3d = arrow("done=True<br>episode ends")
 
     return (
         f"<style>"
@@ -1044,11 +1064,10 @@ def _state_diagram_html() -> str:
         f"State evolves at each phase transition. The agent sees richer context at every step — "
         f"decisions in early phases directly constrain options in later ones.</div>"
         f"<div style='overflow-x:auto;padding-bottom:4px'>"
-        f"<div class='sd-flow' style='display:flex;align-items:stretch;gap:0;min-width:620px'>"
+        f"<div class='sd-flow' style='display:flex;align-items:flex-start;gap:0;min-width:620px'>"
         f"{reset_node}{a01}{p1}{a12}{p2}{a23}{p3}{a3d}{done_node}"
         f"</div></div>"
-        f"{retry_loop}"
-        f"<div style='display:flex;gap:20px;margin-top:4px;flex-wrap:wrap'>"
+        f"<div style='display:flex;gap:20px;margin-top:8px;flex-wrap:wrap'>"
         f"<span style='font-size:11px;color:#444;font-family:\"JetBrains Mono\",monospace'>"
         f"<span style='color:#00d084'>&#9632;</span> correct &nbsp;"
         f"<span style='color:#ffa94d'>&#9632;</span> partial/wrong-team &nbsp;"
