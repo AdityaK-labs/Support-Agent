@@ -228,12 +228,12 @@ async def run_episode(task_name: str, client: AsyncOpenAI) -> None:
     try:
         result = await env.reset()
         obs = result.observation
-        phase = 1
 
         for step in range(1, MAX_STEPS + 1):
             if result.done:
                 break
 
+            phase = env.env.phase  # read actual phase from env, not a local counter
             user_prompt = build_user_prompt(step, obs, history, phase=phase)
             state_dict = {
                 "message": obs.message,
@@ -247,15 +247,11 @@ async def run_episode(task_name: str, client: AsyncOpenAI) -> None:
             reward = result.reward or 0.0
             done = result.done
 
-            # Advance phase tracking based on step count (phases 1→2→3)
-            if phase < 3:
-                phase += 1
-
             rewards.append(reward)
             steps_taken = step
 
             log_step(step=step, action=action_str, reward=reward, done=done, error=step_error)
-            history.append(f"Step {step} (phase {phase-1 if phase > 1 else 1}): {action_str} -> reward {reward:+.2f}")
+            history.append(f"Step {step} (phase {phase}): {action_str} -> reward {reward:+.2f}")
 
             if done:
                 break
