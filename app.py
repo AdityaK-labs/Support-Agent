@@ -316,7 +316,7 @@ CSS = """
 .gradio-container .wrap { border: none !important; }
 .gradio-container .output-html { padding: 0 !important; }
 
-/* ── Tab bar ──────────────────────────────────────────────────────── */
+/* ���─ Tab bar ──────────────���────────��────────────────���─────────────── */
 .gradio-container .tab-nav {
   background: #0d0d0d !important;
   border-bottom: 1px solid #1f1f1f !important;
@@ -698,6 +698,32 @@ button.secondary:hover { border-color: #444 !important; color: #e8e8e8 !importan
 }
 .footer a { color: #555; text-decoration: none; }
 .footer a:hover { color: #00d084; }
+
+/* ── Table scrolling (all viewports) ─────────────────────────────── */
+.table-wrap { overflow-x: auto !important; }
+
+/* ── Mobile / tablet breakpoints ─────────────────────────────────── */
+@media (max-width: 900px) {
+  .gradio-container > .main { padding: 0 16px 32px !important; }
+  .gradio-container .tab-nav { padding: 0 16px !important; }
+  .hero-section { padding: 24px 16px 20px !important; }
+  .stat-grid-resp { grid-template-columns: repeat(3, 1fr) !important; }
+  .unique-grid-resp { grid-template-columns: 1fr !important; }
+  .metrics-bar { grid-template-columns: repeat(2, 1fr) !important; }
+  .msg-cell { max-width: 180px !important; }
+}
+
+@media (max-width: 600px) {
+  .gradio-container > .main { padding: 0 10px 20px !important; }
+  .gradio-container .tab-nav { padding: 0 4px !important; }
+  .gradio-container .tab-nav button { padding: 10px 10px !important; font-size: 11px !important; }
+  .hero-section { padding: 16px 12px 14px !important; }
+  .stat-grid-resp { grid-template-columns: repeat(2, 1fr) !important; }
+  .metrics-bar { grid-template-columns: 1fr 1fr !important; }
+  .msg-cell { max-width: 120px !important; }
+  .kw-cell { display: none !important; }
+  .hide-mobile { display: none !important; }
+}
 """
 
 # ---------------------------------------------------------------------------
@@ -739,12 +765,12 @@ def _hero_html() -> str:
         _stat_card("Reward",    "[0.002,&nbsp;0.998]", small=True)
     )
     return (
-        f"<div style='background:#141414;border-bottom:1px solid #1f1f1f;"
+        f"<div class='hero-section' style='background:#141414;border-bottom:1px solid #1f1f1f;"
         f"padding:32px 32px 28px;font-family:Inter,sans-serif'>"
         f"<div style='font-size:26px;font-weight:700;color:#f0f0f0;line-height:1.2;"
         f"margin-bottom:10px;letter-spacing:-.3px'>Customer Support Agent</div>"
         f"<div style='font-size:13px;color:#666;line-height:1.75;max-width:860px'>{desc}</div>"
-        f"<div style='display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin-top:24px'>"
+        f"<div class='stat-grid-resp' style='display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin-top:24px'>"
         f"{stats}"
         f"</div></div>"
     )
@@ -797,7 +823,7 @@ def _overview_html() -> str:
          "contaminating the reward signal across runs."),
     ]
     grid = (
-        f"<div style='display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));"
+        f"<div class='unique-grid-resp' style='display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));"
         f"gap:14px;margin-top:4px'>"
         + "".join(_unique_card(icon, title, body) for icon, title, body in cards)
         + "</div>"
@@ -863,7 +889,7 @@ def _overview_html() -> str:
         "border-bottom:2px solid #1f1f1f;font-family:Inter,sans-serif'"
     )
     bench_table = (
-        f"<div style='background:#141414;border:1px solid #1f1f1f;border-radius:8px;overflow:hidden;margin-top:4px'>"
+        f"<div style='overflow-x:auto;margin-top:4px'><div style='background:#141414;border:1px solid #1f1f1f;border-radius:8px;overflow:hidden;min-width:520px'>"
         f"<table style='width:100%;border-collapse:collapse;font-size:12px;font-family:\"JetBrains Mono\",monospace'>"
         f"<thead><tr>"
         f"<th {th}>Model</th>"
@@ -875,7 +901,7 @@ def _overview_html() -> str:
         f"<th {thc}>Overall</th>"
         f"</tr></thead>"
         f"<tbody>{bench_html_rows}</tbody>"
-        f"</table></div>"
+        f"</table></div></div>"
     )
 
     return (
@@ -898,6 +924,110 @@ def _overview_html() -> str:
         f"</div>"
     )
 
+
+
+def _state_diagram_html() -> str:
+    def node(phase_num: int, color: str, label: str, action: str, state_after: str, rewards: list) -> str:
+        reward_pills = "".join(
+            f"<span style='background:{c}11;color:{c};border:1px solid {c}33;"
+            f"border-radius:3px;padding:1px 6px;font-size:9px;"
+            f"font-family:\"JetBrains Mono\",monospace;font-weight:700'>{r}</span> "
+            for r, c in rewards
+        )
+        return (
+            f"<div class='sd-node' style='flex:1;min-width:150px'>"
+            f"<div style='background:#141414;border:2px solid {color}44;border-radius:10px;"
+            f"padding:14px 12px;height:100%;box-sizing:border-box'>"
+            f"<div style='font-size:9px;font-weight:700;color:{color};letter-spacing:1.5px;"
+            f"text-transform:uppercase;margin-bottom:6px'>Phase {phase_num}</div>"
+            f"<div style='font-size:14px;font-weight:700;color:#f0f0f0;margin-bottom:10px'>{label}</div>"
+            f"<div style='background:{color}0d;border:1px solid {color}22;border-radius:5px;"
+            f"padding:6px 8px;margin-bottom:10px;font-family:\"JetBrains Mono\",monospace;"
+            f"font-size:10px;color:#aaa'>{action}</div>"
+            f"<div style='font-size:9px;color:#444;text-transform:uppercase;letter-spacing:.8px;margin-bottom:5px'>State after</div>"
+            f"<div style='font-size:10px;font-family:\"JetBrains Mono\",monospace;color:#555;"
+            f"line-height:1.8;margin-bottom:10px'>{state_after}</div>"
+            f"<div style='display:flex;gap:3px;flex-wrap:wrap'>{reward_pills}</div>"
+            f"</div></div>"
+        )
+
+    def arrow(label: str) -> str:
+        return (
+            f"<div class='sd-arrow' style='display:flex;flex-direction:column;align-items:center;"
+            f"justify-content:center;width:52px;flex-shrink:0;padding-top:36px'>"
+            f"<div style='font-size:9px;color:#333;text-align:center;margin-bottom:5px;"
+            f"font-family:\"JetBrains Mono\",monospace;line-height:1.5;white-space:nowrap'>{label}</div>"
+            f"<div style='display:flex;align-items:center;width:100%'>"
+            f"<div style='flex:1;height:1px;background:linear-gradient(to right,#222,#333)'></div>"
+            f"<div style='color:#444;font-size:12px;line-height:1'>&#9654;</div>"
+            f"</div></div>"
+        )
+
+    reset_node = (
+        f"<div class='sd-node' style='flex:0 0 auto;min-width:110px;max-width:130px'>"
+        f"<div style='background:#111;border:1px solid #222;border-radius:10px;"
+        f"padding:14px 12px;height:100%;box-sizing:border-box'>"
+        f"<div style='font-size:9px;color:#333;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:6px'>Start</div>"
+        f"<div style='font-size:13px;font-weight:600;color:#555;margin-bottom:12px;font-family:\"JetBrains Mono\",monospace'>reset()</div>"
+        f"<div style='font-size:10px;font-family:\"JetBrains Mono\",monospace;color:#3a3a3a;line-height:1.8'>"
+        f"issue_type:<br><span style='color:#444'>unknown</span><br>history: []<br>phase: 1"
+        f"</div></div></div>"
+    )
+
+    done_node = (
+        f"<div class='sd-node' style='flex:0 0 auto;min-width:110px;max-width:130px'>"
+        f"<div style='background:#111;border:1px solid #00d08433;border-radius:10px;"
+        f"padding:14px 12px;height:100%;box-sizing:border-box'>"
+        f"<div style='font-size:9px;color:#00d084;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:6px'>End</div>"
+        f"<div style='font-size:13px;font-weight:600;color:#00d084;margin-bottom:12px;font-family:\"JetBrains Mono\",monospace'>done=True</div>"
+        f"<div style='font-size:10px;font-family:\"JetBrains Mono\",monospace;color:#3a3a3a;line-height:1.8'>"
+        f"score =<br>mean(r1,r2,r3)"
+        f"</div></div></div>"
+    )
+
+    p1 = node(1, "#60a5fa", "Triage",
+              "classify + issue_type",
+              "issue_type: <span style='color:#60a5fa'>revealed</span><br>history: +1 msg",
+              [("0.998","#00d084"),("0.55","#ffa94d"),("0.002","#ff6b6b")])
+    p2 = node(2, "#ffa94d", "Route",
+              "assign + team",
+              "team: <span style='color:#ffa94d'>in history</span><br>phase: 3",
+              [("0.998","#00d084"),("0.400","#ffa94d"),("0.002","#ff6b6b")])
+    p3 = node(3, "#00d084", "Resolve",
+              "respond / refund / escalate",
+              "done: <span style='color:#00d084'>True</span><br>or retry if r&lt;0.5",
+              [("0.002–0.998","#00d084")])
+
+    a01 = arrow("")
+    a12 = arrow("issue_type<br>revealed")
+    a23 = arrow("team added<br>to history")
+    a3d = arrow("episode<br>ends")
+
+    return (
+        f"<style>"
+        f"@media(max-width:640px){{"
+        f".sd-flow{{flex-direction:column!important;}}"
+        f".sd-arrow{{flex-direction:row!important;width:100%!important;padding-top:0!important;"
+        f"padding-left:36px!important;height:36px!important;}}"
+        f".sd-arrow>div:last-child{{flex-direction:row!important;}}"
+        f"}}"
+        f"</style>"
+        f"<div style='font-family:Inter,sans-serif;margin-bottom:36px'>"
+        f"<div style='font-size:18px;font-weight:600;color:#f0f0f0;margin-bottom:6px'>Episode State Diagram</div>"
+        f"<div style='font-size:13px;color:#666;margin-bottom:20px;line-height:1.6'>"
+        f"State evolves at each phase transition. The agent sees richer context at every step — "
+        f"decisions in early phases directly constrain options in later ones.</div>"
+        f"<div style='overflow-x:auto;padding-bottom:4px'>"
+        f"<div class='sd-flow' style='display:flex;align-items:stretch;gap:0;min-width:620px'>"
+        f"{reset_node}{a01}{p1}{a12}{p2}{a23}{p3}{a3d}{done_node}"
+        f"</div></div>"
+        f"<div style='display:flex;gap:20px;margin-top:12px;flex-wrap:wrap'>"
+        f"<span style='font-size:11px;color:#444;font-family:\"JetBrains Mono\",monospace'>"
+        f"<span style='color:#00d084'>&#9632;</span> correct &nbsp;"
+        f"<span style='color:#ffa94d'>&#9632;</span> partial/wrong-team &nbsp;"
+        f"<span style='color:#ff6b6b'>&#9632;</span> wrong action</span>"
+        f"</div></div>"
+    )
 
 
 def _scenarios_html() -> str:
@@ -961,6 +1091,7 @@ def _scenarios_html() -> str:
   </div>
 </div>"""
     return f"""
+{_state_diagram_html()}
 <h2 class='section-h'>30 support tickets · 3 difficulty tiers</h2>
 <p class='section-sub'>
   Each scenario runs the full 3-phase MDP. Hover over a message cell to read the full text.
