@@ -1011,6 +1011,24 @@ def _state_diagram_html() -> str:
     a23 = arrow("team added<br>to history")
     a3d = arrow("episode<br>ends")
 
+    retry_loop = (
+        f"<div style='margin:6px 0 18px;padding:10px 14px;background:#1a0a00;"
+        f"border:1px solid #ffa94d33;border-left:3px solid #ffa94d;border-radius:6px;"
+        f"display:flex;align-items:center;gap:10px;flex-wrap:wrap'>"
+        f"<span style='font-size:18px'>&#8635;</span>"
+        f"<div>"
+        f"<span style='font-size:12px;font-weight:600;color:#ffa94d;font-family:Inter,sans-serif'>"
+        f"Phase 3 Retry Loop</span>"
+        f"<span style='font-size:12px;color:#666;font-family:Inter,sans-serif'>"
+        f" &nbsp;— if <code style='color:#9ca3af;background:#1f1f1f;padding:1px 5px;"
+        f"border-radius:3px;font-size:11px'>respond</code> scores &lt; 0.5, the customer "
+        f"replies &ldquo;I&rsquo;m still not satisfied&rdquo; and <code style='color:#ffa94d;"
+        f"background:#1f1f1f;padding:1px 5px;border-radius:3px;font-size:11px'>phase stays at 3"
+        f"</code>. The agent retries until score &ge; 0.5 or the 5-step hard cap is hit."
+        f"</span>"
+        f"</div></div>"
+    )
+
     return (
         f"<style>"
         f"@media(max-width:640px){{"
@@ -1029,7 +1047,8 @@ def _state_diagram_html() -> str:
         f"<div class='sd-flow' style='display:flex;align-items:stretch;gap:0;min-width:620px'>"
         f"{reset_node}{a01}{p1}{a12}{p2}{a23}{p3}{a3d}{done_node}"
         f"</div></div>"
-        f"<div style='display:flex;gap:20px;margin-top:12px;flex-wrap:wrap'>"
+        f"{retry_loop}"
+        f"<div style='display:flex;gap:20px;margin-top:4px;flex-wrap:wrap'>"
         f"<span style='font-size:11px;color:#444;font-family:\"JetBrains Mono\",monospace'>"
         f"<span style='color:#00d084'>&#9632;</span> correct &nbsp;"
         f"<span style='color:#ffa94d'>&#9632;</span> partial/wrong-team &nbsp;"
